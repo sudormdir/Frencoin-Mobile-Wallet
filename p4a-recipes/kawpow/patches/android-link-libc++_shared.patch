@@ -1,0 +1,40 @@
+--- a/bindings/python/kawpow/_build.py
++++ b/bindings/python/kawpow/_build.py
+@@ -9,7 +9,8 @@
+ #     cmake . -DCMAKE_INSTALL_PREFIX=dist
+ #     make
+ #     make install
+ 
+-from cffi import FFI
+-import sys
++from cffi import FFI
++import sys
++import os
+ 
+ ffibuilder = FFI()
+@@
+-ffibuilder.set_source(
+-    "_kawpow",
+-    r"""
+-    #include <kawpow/keccak.h>
+-    #include <kawpow/kawpow.h>
+-     """,
+-    include_dirs=['include'],
+-    libraries=['kawpow', 'keccak'],
+-)
++libs = ['kawpow', 'keccak']
++# When building for Android via python-for-android, link explicitly
++# against the C++ runtime shipped in the APK so __gxx_personality_v0
++# and friends are resolved at dlopen() time.
++if os.environ.get("KAWPOW_ANDROID_BUILD") == "1":
++    libs.append("c++_shared")
++
++ffibuilder.set_source(
++    "_kawpow",
++    r"""
++    #include <kawpow/keccak.h>
++    #include <kawpow/kawpow.h>
++     """,
++    include_dirs=['include'],
++    libraries=libs,
++)

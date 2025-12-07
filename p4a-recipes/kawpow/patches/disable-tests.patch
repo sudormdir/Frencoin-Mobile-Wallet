@@ -1,0 +1,14 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -64,4 +64,7 @@
+-option(KAWPOW_BUILD_TESTS "Build unit tests" ON)
+-if(KAWPOW_BUILD_TESTS)
+-    add_subdirectory(test)
+-endif()
++option(KAWPOW_BUILD_TESTS "Build unit tests" OFF)
++# Tests disabled when building for Android; the upstream 'test'
++# directory pulls extra dependencies (gtest / Hunter) that are not
++# wired up in the python-for-android cross-build.
++# if(KAWPOW_BUILD_TESTS)
++#     add_subdirectory(test)
++# endif()

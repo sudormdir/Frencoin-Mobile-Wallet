@@ -1163,32 +1163,26 @@ class AddressListPopup(Popup):
             )
             return
 
+        # Get displayed addresses from wallet DB (all addresses that have been shown to user)
         try:
-            addresses = app.wallet.get_receiving_addresses()
+            displayed_addresses = app.wallet.db.get("displayed_addresses", [])
         except Exception:
-            addresses = []
+            displayed_addresses = []
 
-        # Filter to only show used addresses (addresses that have received coins)
-        used_addresses = []
-        for addr in addresses:
-            try:
-                if app.wallet.adb.is_used(addr):
-                    used_addresses.append(addr)
-            except Exception:
-                pass
-
-        if not used_addresses:
+        if not displayed_addresses:
             grid.add_widget(
                 Label(
-                    text="No previous addresses.\nAddresses will appear here after receiving coins.",
+                    text="No previous addresses.\nAddresses will appear here after\ntapping 'New' button.",
                     size_hint_y=None,
-                    height=dp(60),
+                    height=dp(70),
                     halign="center",
                 )
             )
             return
 
-        for i, addr in enumerate(used_addresses[:20]):  # Show up to 20 used addresses
+        for i, addr in enumerate(
+            displayed_addresses[:20]
+        ):  # Show up to 20 displayed addresses
             # Format: show index and truncated address
             if len(addr) > 24:
                 addr_display = f"{addr[:14]}...{addr[-10:]}"
@@ -1836,6 +1830,11 @@ class FrencoinApp(App):
                 # Restore quiz state
                 self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
                 self.main_screen.quiz_completed = self.seed_quiz_done
+
+                # Restore saved display address from wallet DB
+                saved_addr = self.wallet.db.get("current_display_address", None)
+                if saved_addr and saved_addr in self.wallet.get_receiving_addresses():
+                    self._current_display_address = saved_addr
 
                 # If seed quiz wasn't completed, resume it
                 if not self.seed_quiz_done:
@@ -2804,9 +2803,26 @@ class FrencoinApp(App):
                                 break
 
             if new_addr and new_addr != self._current_display_address:
+                # Save the OLD address to displayed addresses list before switching
+                if self._current_display_address:
+                    try:
+                        displayed = self.wallet.db.get("displayed_addresses", [])
+                        if self._current_display_address not in displayed:
+                            displayed.append(self._current_display_address)
+                            self.wallet.db.put("displayed_addresses", displayed)
+                            self.wallet.save_db()
+                    except Exception:
+                        pass
+
                 self._current_display_address = new_addr
                 self.main_screen.address = new_addr
                 self.main_screen.status = "New address generated."
+                # Save the new address to wallet DB for persistence
+                try:
+                    self.wallet.db.put("current_display_address", new_addr)
+                    self.wallet.save_db()
+                except Exception:
+                    pass
             else:
                 self._error("No new unused address available.")
         except Exception as e:

@@ -205,7 +205,7 @@ KV = """
         height: '110dp'
         spacing: '10dp'
         Image:
-            source: 'icon.png'
+            source: 'assets/icon.png'
             size_hint_x: None
             width: '110dp'
             allow_stretch: True
@@ -801,6 +801,14 @@ KV = """
             size_hint_y: None
             height: self.texture_size[1]
 
+        Image:
+            source: root.fee_image(fee_slider.value)
+            size_hint: None, None
+            size: '120dp', '120dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
+
         Slider:
             id: fee_slider
             min: 0.01
@@ -892,6 +900,14 @@ KV = """
             text: root.fee_descriptor(fee_slider.value)
             size_hint_y: None
             height: self.texture_size[1]
+
+        Image:
+            source: root.fee_image(fee_slider.value)
+            size_hint: None, None
+            size: '120dp', '120dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
 
         Slider:
             id: fee_slider
@@ -1337,6 +1353,21 @@ class ConfirmSendPopup(Popup):
     default_feerate = NumericProperty(5)
     subtract_fee = BooleanProperty(False)
 
+    def fee_image(self, v):
+        """Return the image path for the current fee level."""
+        try:
+            v = float(v)
+        except Exception:
+            v = 0.014
+        if v <= 0.01000:
+            return "assets/fee_slow.png"
+        elif v <= 0.02000:
+            return "assets/fee_normal.png"
+        elif v <= 0.10000:
+            return "assets/fee_fast.png"
+        else:
+            return "assets/fee_extreme.png"
+
     def fee_descriptor(self, v):
         try:
             v = float(v)
@@ -1380,6 +1411,21 @@ class FeeSettingsPopup(Popup):
     default_feerate = NumericProperty(5)
     subtract_fee = BooleanProperty(False)
     skip_confirm = BooleanProperty(False)
+
+    def fee_image(self, v):
+        """Return the image path for the current fee level."""
+        try:
+            v = float(v)
+        except Exception:
+            v = 0.014
+        if v <= 0.01000:
+            return "assets/fee_slow.png"
+        elif v <= 0.02000:
+            return "assets/fee_normal.png"
+        elif v <= 0.10000:
+            return "assets/fee_fast.png"
+        else:
+            return "assets/fee_extreme.png"
 
     def fee_descriptor(self, v):
         try:

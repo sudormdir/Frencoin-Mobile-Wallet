@@ -54,8 +54,8 @@ requirements = python3,kivy,
     unix-fs-exporter,hamt-sharding,bitmap-sparse-array,protobuf,
     dag-cbor,cffi,kawpow,x16r_hash,x16rv2_hash
 
-icon.filename = icon.png
-android.icon = icon.png
+icon.filename = assets/icon.png
+android.icon = assets/icon.png
 
 # (str) Orientation of the application.  We use portrait mode.
 orientation = portrait

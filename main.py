@@ -543,7 +543,7 @@ KV = """
     BoxLayout:
         orientation: 'vertical'
         padding: '10dp'
-        spacing: '10dp'
+        spacing: '8dp'
 
         Label:
             text: "Keep this 12-word phrase safe. Anyone with this phrase can access your wallet."
@@ -551,16 +551,23 @@ KV = """
             size_hint_y: None
             height: self.texture_size[1]
 
-        ScrollView:
+        Label:
+            text: root.formatted_seed
+            font_size: '16sp'
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        Image:
+            source: 'assets/seed_backup2.png'
+            size_hint: None, None
+            size: '150dp', '150dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
+
+        Widget:
             size_hint_y: 1
-            do_scroll_x: False
-            do_scroll_y: True
-            Label:
-                text: root.formatted_seed
-                font_size: '16sp'
-                text_size: self.width, None
-                size_hint_y: None
-                height: self.texture_size[1]
 
         BoxLayout:
             size_hint_y: None
@@ -957,7 +964,7 @@ KV = """
                 width: '30dp'
                 active: root.subtract_fee
             Button:
-                text: "Subtract fee from amount (default)"
+                text: "Subtract fee from amount"
                 background_color: 0, 0, 0, 0
                 size_hint_x: 1
                 halign: 'left'

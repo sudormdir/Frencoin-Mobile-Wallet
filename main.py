@@ -497,7 +497,7 @@ KV = """
     BoxLayout:
         orientation: 'vertical'
         padding: '10dp'
-        spacing: '10dp'
+        spacing: '8dp'
 
         Label:
             text: "Write this 12-word phrase on paper and keep it in a safe place."
@@ -505,17 +505,23 @@ KV = """
             size_hint_y: None
             height: self.texture_size[1]
 
-        ScrollView:
+        Label:
+            text: root.formatted_seed
+            font_size: '16sp'
+            text_size: self.width, None
             size_hint_y: None
-            height: '360dp'
-            do_scroll_x: False
-            do_scroll_y: True
-            Label:
-                text: root.formatted_seed
-                font_size: '16sp'
-                text_size: self.width, None
-                size_hint_y: None
-                height: self.texture_size[1]
+            height: self.texture_size[1]
+
+        Image:
+            source: 'assets/seed_backup.png'
+            size_hint: None, None
+            size: '150dp', '150dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
+
+        Widget:
+            size_hint_y: 1
 
         BoxLayout:
             size_hint_y: None

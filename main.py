@@ -356,7 +356,7 @@ KV = """
             on_release: app.send_funds(root.send_to, root.amount)
 
 <RestoreWalletPopup>:
-    title: "Welcome"
+    title: "NEWFREN!!!!!!"
     size_hint: .9, .9
     auto_dismiss: False
     ScrollView:
@@ -372,7 +372,7 @@ KV = """
             height: self.minimum_height
 
             Label:
-                text: "Restore a wallet from a 12-word recovery phrase, or create a new one."
+                text: "Restore a Frencoin wallet from a 12-word recovery phrase, or create a new one."
                 text_size: self.width, None
                 size_hint_y: None
                 height: self.texture_size[1]
@@ -2001,7 +2001,7 @@ class FrencoinApp(App):
             except Exception:
                 pass
         self.main_screen.quiz_completed = True
-        self._info("Wallet restored from seed.")
+        self._pending_wallet_restored_popup = True
         Clock.schedule_once(
             lambda dt: self.open_password_dialog(first_time_setup=True), 0.1
         )
@@ -2394,7 +2394,16 @@ class FrencoinApp(App):
             return
         try:
             self.wallet.update_password(old_pw, new_pw, encrypt_storage=bool(new_pw))
-            self._info("Password updated.")
+            # Check if we need to show wallet restored popup first
+            if getattr(self, "_pending_wallet_restored_popup", False):
+                self._pending_wallet_restored_popup = False
+                self._info_with_image(
+                    "Wallet restored from seed.", "assets/wallet_restored.png"
+                )
+            else:
+                self._info_with_image(
+                    "Password updated.", "assets/password_updated.png"
+                )
         except Exception as e:
             err_str = str(e).lower()
             # Normalize error messages for security - don't reveal if password exists
@@ -2532,6 +2541,57 @@ class FrencoinApp(App):
 
     def _info(self, msg):
         self._popup("Info", msg)
+
+    def _info_with_image(self, msg, image_path):
+        """Show an info popup with a centered image above the message (no title bar)."""
+        from kivy.uix.image import Image
+        from kivy.uix.widget import Widget
+
+        # Main container
+        container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
+
+        # Image centered at top
+        img = Image(
+            source=image_path,
+            size_hint=(None, None),
+            size=(dp(120), dp(120)),
+            pos_hint={"center_x": 0.5},
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        container.add_widget(img)
+
+        # Create a label that wraps text properly
+        label = Label(
+            text=msg,
+            halign="center",
+            valign="top",
+            text_size=(None, None),
+            size_hint_y=None,
+        )
+        label.bind(
+            width=lambda inst, val: setattr(inst, "text_size", (val - dp(20), None))
+        )
+        label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1]))
+        container.add_widget(label)
+
+        # Spacer
+        container.add_widget(Widget(size_hint_y=1))
+
+        # Close button
+        btn_box = BoxLayout(size_hint_y=None, height=dp(44))
+        popup = Popup(
+            title="",
+            separator_height=0,
+            content=container,
+            size_hint=(0.9, 0.45),
+        )
+        close_btn = Button(text="Close")
+        close_btn.bind(on_release=popup.dismiss)
+        btn_box.add_widget(close_btn)
+        container.add_widget(btn_box)
+
+        popup.open()
 
     # ---------- Wallet actions ----------
 

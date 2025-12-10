@@ -515,7 +515,7 @@ KV = """
         Image:
             source: 'assets/seed_backup.png'
             size_hint: None, None
-            size: '150dp', '150dp'
+            size: '200dp', '200dp'
             pos_hint: {'center_x': 0.5}
             allow_stretch: True
             keep_ratio: True
@@ -561,7 +561,7 @@ KV = """
         Image:
             source: 'assets/seed_backup2.png'
             size_hint: None, None
-            size: '150dp', '150dp'
+            size: '200dp', '200dp'
             pos_hint: {'center_x': 0.5}
             allow_stretch: True
             keep_ratio: True

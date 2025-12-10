@@ -839,35 +839,39 @@ KV = """
 
         BoxLayout:
             size_hint_y: None
-            height: '24dp'
+            height: '36dp'
             spacing: '10dp'
             CheckBox:
                 id: subtract_cb
                 size_hint_x: None
                 width: '30dp'
                 active: root.subtract_fee
-            Label:
+            Button:
                 text: "Subtract fee from amount"
-                text_size: self.width, None
+                background_color: 0, 0, 0, 0
                 size_hint_x: 1
                 halign: 'left'
-                height: self.texture_size[1]
+                valign: 'middle'
+                text_size: self.width - dp(10), None
+                on_release: setattr(subtract_cb, 'active', not subtract_cb.active)
 
         BoxLayout:
             size_hint_y: None
-            height: '24dp'
+            height: '36dp'
             spacing: '10dp'
             CheckBox:
                 id: dont_show_cb
                 size_hint_x: None
                 width: '30dp'
                 active: False
-            Label:
+            Button:
                 text: "Don't show this confirmation again"
-                text_size: self.width, None
+                background_color: 0, 0, 0, 0
                 size_hint_x: 1
                 halign: 'left'
-                height: self.texture_size[1]
+                valign: 'middle'
+                text_size: self.width - dp(10), None
+                on_release: setattr(dont_show_cb, 'active', not dont_show_cb.active)
 
         Widget:
 
@@ -939,31 +943,39 @@ KV = """
 
         BoxLayout:
             size_hint_y: None
-            height: '24dp'
+            height: '36dp'
             spacing: '10dp'
             CheckBox:
                 id: subtract_cb
+                size_hint_x: None
+                width: '30dp'
                 active: root.subtract_fee
-            Label:
+            Button:
                 text: "Subtract fee from amount (default)"
-                text_size: self.width, None
+                background_color: 0, 0, 0, 0
                 size_hint_x: 1
                 halign: 'left'
-                height: self.texture_size[1]
+                valign: 'middle'
+                text_size: self.width - dp(10), None
+                on_release: setattr(subtract_cb, 'active', not subtract_cb.active)
 
         BoxLayout:
             size_hint_y: None
-            height: '24dp'
+            height: '36dp'
             spacing: '10dp'
             CheckBox:
                 id: skip_cb
+                size_hint_x: None
+                width: '30dp'
                 active: root.skip_confirm
-            Label:
+            Button:
                 text: "Don't show confirmation before sending"
-                text_size: self.width, None
+                background_color: 0, 0, 0, 0
                 size_hint_x: 1
                 halign: 'left'
-                height: self.texture_size[1]
+                valign: 'middle'
+                text_size: self.width - dp(10), None
+                on_release: setattr(skip_cb, 'active', not skip_cb.active)
 
         Widget:
 
@@ -1382,7 +1394,7 @@ class ConfirmSendPopup(Popup):
         elif fren_kb <= 0.10000:
             speed = "Fast"
         else:
-            speed = "IT'S MY MONEY AND I NEED IT NOW!!!!!"
+            speed = "IT'S MY MONEY AND I NEED IT NOW!!!!"
         return f"{speed} • {fren_kb:.5f} FREN/kB"
 
     def on_open(self):
@@ -1441,7 +1453,7 @@ class FeeSettingsPopup(Popup):
         elif fren_kb <= 0.10000:
             speed = "Fast"
         else:
-            speed = "IT'S MY MONEY AND I NEED IT NOW!!!!!"
+            speed = "IT'S MY MONEY AND I NEED IT NOW!!!!"
         return f"{speed} • {fren_kb:.5f} FREN/kB"
 
     def save_and_close(self, feerate_value, subtract, skip_confirm):

@@ -2249,7 +2249,6 @@ class FrencoinApp(App):
             url = f"https://explorer.frencoin.org/api/getrawtransaction?txid={txid}&decrypt=1"
             print(f"[FREN DEBUG] Fetching timestamp for txid: {txid[:16]}...")
 
-            # Create SSL context that doesn't verify (for Android compatibility)
             cafile = certifi.where()
             ctx = ssl.create_default_context(cafile=cafile)
             # ctx.check_hostname = False

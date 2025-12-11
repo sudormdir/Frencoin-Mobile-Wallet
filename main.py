@@ -1,6 +1,7 @@
 import os
 import random
 from decimal import Decimal
+import certifi
 
 from kivy.app import App
 from kivy.lang import Builder
@@ -2249,9 +2250,10 @@ class FrencoinApp(App):
             print(f"[FREN DEBUG] Fetching timestamp for txid: {txid[:16]}...")
 
             # Create SSL context that doesn't verify (for Android compatibility)
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+            cafile = certifi.where()
+            ctx = ssl.create_default_context(cafile=cafile)
+            # ctx.check_hostname = False
+            # ctx.verify_mode = ssl.CERT_NONE
 
             req = urllib.request.Request(
                 url, headers={"User-Agent": "Frencoin-Wallet/1.0"}

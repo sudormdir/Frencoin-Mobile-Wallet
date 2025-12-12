@@ -2,7 +2,7 @@
 
 Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin-aware Electrum client inside a Kivy user interface. If you are new to wallets, it simply means the app stores your private keys locally, connects to a trusted ElectrumX server for blockchain data, and lets you move coins without handing control to anyone else. If you are more experienced, you will be happy to know that everything happens client-side, transactions are signed with native `libsecp256k1`, and the Electrum stack runs in oneserver mode for consistent results.
 
----<img width="1080" height="2400" alt="Screenshot_20251209-193703" src="https://github.com/user-attachments/assets/6f300e62-6926-4bd7-8e97-4e09115a467f" />
+---<img width="540" height="1200" alt="Screenshot_20251209-193703" src="https://github.com/user-attachments/assets/6f300e62-6926-4bd7-8e97-4e09115a467f" />
 
 
 ## Quick Overview

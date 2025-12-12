@@ -1,9 +1,9 @@
 # Frencoin Mobile Wallet (Android)
 
 Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin-aware Electrum client inside a Kivy user interface. If you are new to wallets, it simply means the app stores your private keys locally, connects to a trusted ElectrumX server for blockchain data, and lets you move coins without handing control to anyone else. If you are more experienced, you will be happy to know that everything happens client-side, transactions are signed with native `libsecp256k1`, and the Electrum stack runs in oneserver mode for consistent results.
-
-<img width="135" height="300" alt="Frencoin Mobile Wallet Main Screen" src="https://github.com/user-attachments/assets/6f300e62-6926-4bd7-8e97-4e09115a467f" />
-
+<p align='center'>
+<img width="225" height="500" alt="Frencoin Mobile Wallet Main Screen" src="https://github.com/user-attachments/assets/6f300e62-6926-4bd7-8e97-4e09115a467f" />
+</p>
 
 ## Quick Overview
 
@@ -17,8 +17,9 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 ## Feature Tour
 
 ### Getting started & recovery
-<img width="135" height="300" alt="Opening Screen" src="https://github.com/user-attachments/assets/3ab2d2f9-d61b-4ea3-b98c-ff5cb9af5234" />
-
+<p align='center'>
+<img width="225" height="500" alt="Opening Screen" src="https://github.com/user-attachments/assets/3ab2d2f9-d61b-4ea3-b98c-ff5cb9af5234" />
+</p>
 - Create a fresh 12-word recovery phrase or import an existing BIP39-compatible one.
 - Backup flow displays the seed in a spaced, easy-to-read layout and immediately quizzes you on three random words so you confirm the phrase before you can send funds.
 - Wallet files are stored using Electrum’s wallet database format; the send screen stays disabled until the backup quiz is complete.

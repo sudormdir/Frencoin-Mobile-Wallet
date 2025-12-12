@@ -15,11 +15,10 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 ---
 
 ## Feature Tour
-
-### Getting started & recovery
 <p align='center'>
 <img width="225" height="500" alt="Opening Screen" src="https://github.com/user-attachments/assets/3ab2d2f9-d61b-4ea3-b98c-ff5cb9af5234" />
 </p>
+### Getting started & recovery
 - Create a fresh 12-word recovery phrase or import an existing BIP39-compatible one.
 - Backup flow immediately quizzes you on three random words so you don't lose your frens.
 - Wallet files are stored using Electrum’s wallet database format.

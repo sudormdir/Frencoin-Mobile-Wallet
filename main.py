@@ -412,6 +412,19 @@ KV = """
                     text: "Restore"
                     on_release: root.restore(seed_input.text)
 
+            AnchorLayout:
+                size_hint_y: None
+                height: '220dp'
+                anchor_x: 'center'
+                anchor_y: 'top'
+                padding: '0dp', '-20dp', '0dp', '0dp'
+                Image:
+                    source: 'assets/welcome_fren.png'
+                    size_hint: None, None
+                    size: '220dp', '220dp'
+                    allow_stretch: True
+                    keep_ratio: True
+
 <SeedQuizPopup>:
     title: "Confirm your 12-word seed"
     size_hint: .9, .9
@@ -1158,6 +1171,10 @@ class SeedViewPopup(Popup):
         self.dismiss()
         app.open_seed_quiz(seed)
 
+    def on_dismiss(self):
+        self.full_seed = ""
+        self.formatted_seed = ""
+
 
 class SeedViewFromMenuPopup(Popup):
     """Separate popup for viewing seed from menu - always has Close button."""
@@ -1168,6 +1185,14 @@ class SeedViewFromMenuPopup(Popup):
     def on_full_seed(self, instance, value):
         normalized = " ".join((value or "").split())
         self.formatted_seed = format_seed_4col(normalized)
+
+    def on_dismiss(self, *args):
+        # Clear on the next frame, when we're no longer visible
+        Clock.schedule_once(self._clear_seed, 0)
+
+    def _clear_seed(self, dt):
+        self.full_seed = ""
+        self.formatted_seed = ""
 
 
 class MenuPopup(Popup):
@@ -2422,7 +2447,7 @@ class FrencoinApp(App):
             err_str = str(e).lower()
             # Normalize error messages for security - don't reveal if password exists
             if "password" in err_str or "incorrect" in err_str or "wrong" in err_str:
-                self._error("Wrong password.")
+                self._error_with_image("Wrong password.", "assets/wrong_password.png")
             else:
                 self._error(f"Could not update password: {e}")
 
@@ -2493,6 +2518,7 @@ class FrencoinApp(App):
                 self.config.set_key("seed_quiz_done", True)
             except Exception:
                 pass
+        self._last_seed_phrase = None
         Clock.schedule_once(
             lambda dt: self.open_password_dialog(first_time_setup=True), 0.1
         )
@@ -2553,6 +2579,57 @@ class FrencoinApp(App):
     def _error(self, msg):
         self._popup("Error", msg)
 
+    def _error_with_image(self, msg, image_path):
+        """Show an error popup with a centered image above the message (no title bar)."""
+        from kivy.uix.image import Image
+        from kivy.uix.widget import Widget
+
+        # Main container
+        container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
+
+        # Image centered at top
+        img = Image(
+            source=image_path,
+            size_hint=(None, None),
+            size=(dp(180), dp(180)),
+            pos_hint={"center_x": 0.5},
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        container.add_widget(img)
+
+        # Create a label that wraps text properly
+        label = Label(
+            text=msg,
+            halign="center",
+            valign="top",
+            text_size=(None, None),
+            size_hint_y=None,
+        )
+        label.bind(
+            width=lambda inst, val: setattr(inst, "text_size", (val - dp(20), None))
+        )
+        label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1]))
+        container.add_widget(label)
+
+        # Spacer
+        container.add_widget(Widget(size_hint_y=1))
+
+        # Close button
+        btn_box = BoxLayout(size_hint_y=None, height=dp(44))
+        popup = Popup(
+            title="",
+            separator_height=0,
+            content=container,
+            size_hint=(0.9, 0.45),
+        )
+        close_btn = Button(text="Close")
+        close_btn.bind(on_release=popup.dismiss)
+        btn_box.add_widget(close_btn)
+        container.add_widget(btn_box)
+
+        popup.open()
+
     def _info(self, msg):
         self._popup("Info", msg)
 
@@ -2568,7 +2645,7 @@ class FrencoinApp(App):
         img = Image(
             source=image_path,
             size_hint=(None, None),
-            size=(dp(120), dp(120)),
+            size=(dp(180), dp(180)),
             pos_hint={"center_x": 0.5},
             allow_stretch=True,
             keep_ratio=True,

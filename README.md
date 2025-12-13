@@ -16,7 +16,7 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 
 ## Feature Tour
 <p align='center'>
-<img width="225" height="500" alt="Opening Screen" src="https://github.com/user-attachments/assets/3ab2d2f9-d61b-4ea3-b98c-ff5cb9af5234" />
+<img width="225" height="500" alt="Screenshot_20251212-220332" src="https://github.com/user-attachments/assets/b333d519-3f5e-490d-a32e-8bb27a22faf1" />
 </p>
 ### Getting started & recovery
 - Create a fresh 12-word recovery phrase or import an existing BIP39-compatible one.

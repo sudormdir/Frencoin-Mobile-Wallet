@@ -15,6 +15,8 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.popup import Popup
 from kivy.uix.modalview import ModalView
 from kivy.uix.label import Label
+from kivy.uix.image import Image
+from kivy.uix.widget import Widget
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.clipboard import Clipboard
@@ -2531,9 +2533,9 @@ class FrencoinApp(App):
                 def _on_success(dt):
                     # Reset password attempts on successful send
                     self._reset_password_attempts()
-                    self._popup(
-                        "Success",
+                    self._success_with_image(
                         f"Transaction broadcasted!\n\nTXID:\n{txid}",
+                        "assets/tx_success.png",
                         copyable_text=txid,
                     )
                     self.refresh_wallet()
@@ -2893,9 +2895,6 @@ class FrencoinApp(App):
 
     def _error_with_image(self, msg, image_path):
         """Show an error popup with a centered image above the message (no title bar)."""
-        from kivy.uix.image import Image
-        from kivy.uix.widget import Widget
-
         # Main container
         container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
 
@@ -2947,9 +2946,6 @@ class FrencoinApp(App):
 
     def _info_with_image(self, msg, image_path):
         """Show an info popup with a centered image above the message (no title bar)."""
-        from kivy.uix.image import Image
-        from kivy.uix.widget import Widget
-
         # Main container
         container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
 
@@ -2989,6 +2985,66 @@ class FrencoinApp(App):
             content=container,
             size_hint=(0.9, 0.45),
         )
+        close_btn = Button(text="Close")
+        close_btn.bind(on_release=popup.dismiss)
+        btn_box.add_widget(close_btn)
+        container.add_widget(btn_box)
+
+        popup.open()
+
+    def _success_with_image(self, msg, image_path, copyable_text=None):
+        """Show a success popup with text, then centered image below, optional copy button."""
+        # Main container
+        container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
+
+        # Create a label that wraps text properly
+        label = Label(
+            text=msg,
+            halign="center",
+            valign="top",
+            text_size=(None, None),
+            size_hint_y=None,
+        )
+        label.bind(
+            width=lambda inst, val: setattr(inst, "text_size", (val - dp(20), None))
+        )
+        label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1]))
+        container.add_widget(label)
+
+        # Image centered below text
+        img = Image(
+            source=image_path,
+            size_hint=(None, None),
+            size=(dp(200), dp(200)),
+            pos_hint={"center_x": 0.5},
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        container.add_widget(img)
+
+        # Spacer
+        container.add_widget(Widget(size_hint_y=1))
+
+        # Button row
+        btn_box = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(10))
+        popup = Popup(
+            title="",
+            separator_height=0,
+            content=container,
+            size_hint=(0.9, 0.55),
+        )
+
+        if copyable_text:
+            copy_btn = Button(text="Copy TXID")
+
+            def do_copy(_inst):
+                Clipboard.copy(copyable_text)
+                _inst.text = "Copied!"
+                Clock.schedule_once(lambda dt: setattr(_inst, "text", "Copy TXID"), 1.5)
+
+            copy_btn.bind(on_release=do_copy)
+            btn_box.add_widget(copy_btn)
+
         close_btn = Button(text="Close")
         close_btn.bind(on_release=popup.dismiss)
         btn_box.add_widget(close_btn)

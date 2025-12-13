@@ -505,7 +505,7 @@ KV = """
 
 <SeedViewPopup>:
     title: "Write down your recovery phrase"
-    size_hint: .9, .9
+    size_hint: .9, .7
     auto_dismiss: False
 
     BoxLayout:
@@ -701,7 +701,7 @@ KV = """
         Image:
             source: 'assets/no_password_warning.png'
             size_hint: None, None
-            size: '180dp', '180dp'
+            size: '280dp', '280dp'
             pos_hint: {'center_x': 0.5}
             allow_stretch: True
             keep_ratio: True
@@ -1950,6 +1950,9 @@ class FrencoinApp(App):
         self._pending_feerate = 5
         self._pending_subtract = False
         self._current_display_address = None  # Stable address shown in UI
+        # Password attempt tracking for brute-force protection
+        self._failed_password_attempts = 0
+        self._password_cooldown_until = 0  # Unix timestamp when cooldown ends
 
     def build(self):
         # Use 'pan' mode so keyboard pushes content up when needed
@@ -2372,6 +2375,10 @@ class FrencoinApp(App):
         return None
 
     def _finish_send_with_password(self, password: Optional[str]):
+        # Check cooldown before attempting
+        if password is not None and self._check_password_cooldown():
+            return
+
         params = getattr(self, "_pending_send", None)
         self._pending_send = None
         if not params:
@@ -2471,6 +2478,8 @@ class FrencoinApp(App):
                 print(f"[TX] Transaction broadcasted: {txid}")
 
                 def _on_success(dt):
+                    # Reset password attempts on successful send
+                    self._reset_password_attempts()
                     self._popup(
                         "Success",
                         f"Transaction broadcasted!\n\nTXID:\n{txid}",
@@ -2493,9 +2502,44 @@ class FrencoinApp(App):
                 import traceback
 
                 traceback.print_exc()
-                Clock.schedule_once(
-                    lambda dt, msg=err_msg: self._error(f"Error: {msg}"), 0
-                )
+                err_str = err_msg.lower()
+                if (
+                    "password" in err_str
+                    or "incorrect" in err_str
+                    or "wrong" in err_str
+                ):
+
+                    def _handle_password_error(dt):
+                        self._record_failed_password()
+                        remaining = self._get_password_cooldown_seconds()
+                        if remaining > 0:
+                            minutes = remaining // 60
+                            seconds = remaining % 60
+                            if minutes > 0:
+                                time_str = f"{minutes}m {seconds}s"
+                            else:
+                                time_str = f"{seconds}s"
+                            self._error_with_image(
+                                f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                                "assets/wrong_password.png",
+                            )
+                        else:
+                            attempts_left = 3 - self._failed_password_attempts
+                            if attempts_left > 0:
+                                self._error_with_image(
+                                    f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
+                                    "assets/wrong_password.png",
+                                )
+                            else:
+                                self._error_with_image(
+                                    "Wrong password.", "assets/wrong_password.png"
+                                )
+
+                    Clock.schedule_once(_handle_password_error, 0)
+                else:
+                    Clock.schedule_once(
+                        lambda dt, msg=err_msg: self._error(f"Error: {msg}"), 0
+                    )
             finally:
                 Clock.schedule_once(lambda dt: self.refresh_wallet(), 0)
 
@@ -2505,12 +2549,75 @@ class FrencoinApp(App):
         thread.start()
         print("[TX] Background thread started, returning to UI")
 
+    def _get_password_cooldown_seconds(self) -> int:
+        """Get remaining cooldown seconds, or 0 if no cooldown active."""
+        import time
+
+        remaining = self._password_cooldown_until - time.time()
+        return max(0, int(remaining))
+
+    def _get_cooldown_duration(self) -> int:
+        """Get cooldown duration in seconds based on failed attempts."""
+        # First 3 attempts: no cooldown
+        # 4th attempt: 1 minute
+        # 5th attempt: 3 minutes
+        # 6th attempt: 5 minutes
+        # 7th+: add 5 minutes each time (10, 15, 20, ...)
+        attempts = self._failed_password_attempts
+        if attempts < 3:
+            return 0
+        elif attempts == 3:
+            return 60  # 1 minute
+        elif attempts == 4:
+            return 180  # 3 minutes
+        else:
+            # 5 minutes + 5 minutes for each attempt beyond 5
+            return 300 + (attempts - 5) * 300
+
+    def _record_failed_password(self):
+        """Record a failed password attempt and set cooldown if needed."""
+        import time
+
+        self._failed_password_attempts += 1
+        cooldown = self._get_cooldown_duration()
+        if cooldown > 0:
+            self._password_cooldown_until = time.time() + cooldown
+
+    def _reset_password_attempts(self):
+        """Reset failed attempts on successful password entry."""
+        self._failed_password_attempts = 0
+        self._password_cooldown_until = 0
+
+    def _check_password_cooldown(self) -> bool:
+        """Check if in cooldown. If so, show error and return True."""
+        remaining = self._get_password_cooldown_seconds()
+        if remaining > 0:
+            minutes = remaining // 60
+            seconds = remaining % 60
+            if minutes > 0:
+                time_str = f"{minutes}m {seconds}s"
+            else:
+                time_str = f"{seconds}s"
+            self._error_with_image(
+                f"Too many failed attempts.\nPlease wait {time_str} before trying again.",
+                "assets/wrong_password.png",
+            )
+            return True
+        return False
+
     def set_wallet_password(self, old_pw: str | None, new_pw: str | None):
         if not self.wallet:
             self._error("Wallet not ready yet.")
             return
+
+        # Check cooldown before attempting
+        if old_pw is not None and self._check_password_cooldown():
+            return
+
         try:
             self.wallet.update_password(old_pw, new_pw, encrypt_storage=bool(new_pw))
+            # Success - reset failed attempts
+            self._reset_password_attempts()
             # Check if we need to show wallet restored popup first
             if getattr(self, "_pending_wallet_restored_popup", False):
                 self._pending_wallet_restored_popup = False
@@ -2525,7 +2632,30 @@ class FrencoinApp(App):
             err_str = str(e).lower()
             # Normalize error messages for security - don't reveal if password exists
             if "password" in err_str or "incorrect" in err_str or "wrong" in err_str:
-                self._error_with_image("Wrong password.", "assets/wrong_password.png")
+                self._record_failed_password()
+                remaining = self._get_password_cooldown_seconds()
+                if remaining > 0:
+                    minutes = remaining // 60
+                    seconds = remaining % 60
+                    if minutes > 0:
+                        time_str = f"{minutes}m {seconds}s"
+                    else:
+                        time_str = f"{seconds}s"
+                    self._error_with_image(
+                        f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                        "assets/wrong_password.png",
+                    )
+                else:
+                    attempts_left = 3 - self._failed_password_attempts
+                    if attempts_left > 0:
+                        self._error_with_image(
+                            f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
+                            "assets/wrong_password.png",
+                        )
+                    else:
+                        self._error_with_image(
+                            "Wrong password.", "assets/wrong_password.png"
+                        )
             else:
                 self._error(f"Could not update password: {e}")
 
@@ -2533,11 +2663,44 @@ class FrencoinApp(App):
         self.set_wallet_password(old_pw, None)
 
     def _show_seed_with_password(self, password: Optional[str]):
+        # Check cooldown before attempting
+        if password is not None and self._check_password_cooldown():
+            return
+
         try:
             seed = self.wallet.get_seed(password)
+            # Success - reset failed attempts
+            self._reset_password_attempts()
             SeedViewFromMenuPopup(full_seed=seed).open()
         except Exception as e:
-            self._error(f"Cannot access recovery phrase: {e}")
+            err_str = str(e).lower()
+            if "password" in err_str or "incorrect" in err_str or "wrong" in err_str:
+                self._record_failed_password()
+                remaining = self._get_password_cooldown_seconds()
+                if remaining > 0:
+                    minutes = remaining // 60
+                    seconds = remaining % 60
+                    if minutes > 0:
+                        time_str = f"{minutes}m {seconds}s"
+                    else:
+                        time_str = f"{seconds}s"
+                    self._error_with_image(
+                        f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                        "assets/wrong_password.png",
+                    )
+                else:
+                    attempts_left = 3 - self._failed_password_attempts
+                    if attempts_left > 0:
+                        self._error_with_image(
+                            f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
+                            "assets/wrong_password.png",
+                        )
+                    else:
+                        self._error_with_image(
+                            "Wrong password.", "assets/wrong_password.png"
+                        )
+            else:
+                self._error(f"Cannot access recovery phrase: {e}")
 
     def open_seed_backup_flow(self, seed: str):
         self._last_seed_phrase = seed

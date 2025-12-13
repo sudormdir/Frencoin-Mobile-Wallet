@@ -1967,6 +1967,16 @@ class FrencoinApp(App):
         # Do wallet/network setup after the UI is visible
         Clock.schedule_once(lambda dt: self._init_wallet(), 0)
         Clock.schedule_interval(lambda dt: self.refresh_wallet(), 15)
+        # Periodically save wallet to prevent data loss on crash
+        Clock.schedule_interval(lambda dt: self._periodic_wallet_save(), 60)
+
+    def _periodic_wallet_save(self):
+        """Periodically save wallet state to disk to prevent data loss."""
+        if self.wallet:
+            try:
+                self.wallet.save_db()
+            except Exception as e:
+                print(f"[WALLET] Periodic save error: {e}")
 
     # ---------- Wallet / network setup ----------
 
@@ -2214,10 +2224,26 @@ class FrencoinApp(App):
             pass
 
     def on_pause(self):
-        # Let the app pause gracefully - don't force keyboard release
+        # Save wallet state when app is paused to prevent data loss on crash
+        if self.wallet:
+            try:
+                self.wallet.save_db()
+            except Exception as e:
+                print(f"[WALLET] Error saving wallet on pause: {e}")
         return True
 
     def on_resume(self):
+        # Force canvas redraw to fix black screen issue after pause/resume
+        try:
+            if self.main_screen:
+                self.main_screen.canvas.ask_update()
+            # Also try to refresh the root window
+            from kivy.core.window import Window
+
+            Window.canvas.ask_update()
+        except Exception as e:
+            print(f"[UI] Canvas refresh error on resume: {e}")
+
         # Refresh wallet state when app resumes
         # Use a background thread to avoid ANR when wallet operations are slow
         def _bg_resume():
@@ -2232,6 +2258,12 @@ class FrencoinApp(App):
         return True
 
     def on_stop(self):
+        # Save wallet state when app is stopped
+        if self.wallet:
+            try:
+                self.wallet.save_db()
+            except Exception as e:
+                print(f"[WALLET] Error saving wallet on stop: {e}")
         try:
             from kivy.core.window import Window as _W
 

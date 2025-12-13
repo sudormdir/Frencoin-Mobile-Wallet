@@ -671,6 +671,55 @@ KV = """
             height: '48dp'
             on_release: root.dismiss()
 
+<NoPasswordWarningPopup>:
+    title: ""
+    separator_height: 0
+    size_hint: .9, .7
+    auto_dismiss: False
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '15dp'
+        spacing: '10dp'
+
+        Label:
+            text: "WARNING"
+            font_size: '24sp'
+            bold: True
+            color: (1, 0, 0, 1)
+            size_hint_y: None
+            height: self.texture_size[1]
+            halign: 'center'
+
+        Label:
+            text: "Not setting a password allows anyone with access to your device to extract the wallet file and steal all your coins. You are strongly advised to set one."
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: (1, 0.3, 0.3, 1)
+            halign: 'center'
+
+        Image:
+            source: 'assets/no_password_warning.png'
+            size_hint: None, None
+            size: '180dp', '180dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
+
+        Widget:
+            size_hint_y: 1
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: '10dp'
+            Button:
+                text: "Back"
+                on_release: root.go_back()
+            Button:
+                text: "I'll take my chances"
+                on_release: root.proceed_without_password()
+
 <SetPasswordPopup>:
     title: "Set or change password"
     size_hint: .9, .7
@@ -1283,6 +1332,25 @@ class AddressListPopup(Popup):
                 pass
 
 
+class NoPasswordWarningPopup(Popup):
+    """Warning popup shown when user tries to skip setting a password."""
+
+    old_pw = StringProperty("")
+    first_time_setup = BooleanProperty(False)
+
+    def go_back(self):
+        """Return to password dialog."""
+        self.dismiss()
+        SetPasswordPopup(first_time_setup=self.first_time_setup).open()
+
+    def proceed_without_password(self):
+        """User accepted the risk, proceed without password."""
+        self.dismiss()
+        app = App.get_running_app()
+        if app and hasattr(app, "set_wallet_password"):
+            app.set_wallet_password(self.old_pw or None, None)
+
+
 class SetPasswordPopup(Popup):
     # If True, hide current password field (used only for first-time setup after wallet creation)
     first_time_setup = BooleanProperty(False)
@@ -1294,12 +1362,22 @@ class SetPasswordPopup(Popup):
             except Exception:
                 pass
             return
+
+        new_pw_stripped = (new_pw or "").strip()
+        old_pw_stripped = (old_pw or "").strip() or None
+
+        # If no new password, show warning popup
+        if not new_pw_stripped:
+            self.dismiss()
+            NoPasswordWarningPopup(
+                old_pw=old_pw_stripped or "", first_time_setup=self.first_time_setup
+            ).open()
+            return
+
         app = App.get_running_app()
         try:
             if app and hasattr(app, "set_wallet_password"):
-                app.set_wallet_password(
-                    (old_pw or "").strip() or None, (new_pw or "").strip() or None
-                )
+                app.set_wallet_password(old_pw_stripped, new_pw_stripped)
                 self.dismiss()
             else:
                 self.ids.err.text = "App not ready"

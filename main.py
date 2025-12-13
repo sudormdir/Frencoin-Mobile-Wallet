@@ -551,7 +551,7 @@ KV = """
 
 <SeedViewFromMenuPopup>:
     title: "Your recovery phrase"
-    size_hint: .9, .9
+    size_hint: .9, .7
     auto_dismiss: True
 
     BoxLayout:
@@ -2376,7 +2376,26 @@ class FrencoinApp(App):
 
     def _finish_send_with_password(self, password: Optional[str]):
         # Check cooldown before attempting
-        if password is not None and self._check_password_cooldown():
+        if self._check_password_cooldown():
+            return
+
+        # If wallet has password but none provided, treat as wrong password
+        if self.wallet.has_password() and not password:
+            self._record_failed_password()
+            remaining = self._get_password_cooldown_seconds()
+            if remaining > 0:
+                minutes = remaining // 60
+                seconds = remaining % 60
+                if minutes > 0:
+                    time_str = f"{minutes}m {seconds}s"
+                else:
+                    time_str = f"{seconds}s"
+                self._error_with_image(
+                    f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                    "assets/wrong_password.png",
+                )
+            else:
+                self._error_with_image("Wrong password.", "assets/wrong_password.png")
             return
 
         params = getattr(self, "_pending_send", None)
@@ -2524,16 +2543,9 @@ class FrencoinApp(App):
                                 "assets/wrong_password.png",
                             )
                         else:
-                            attempts_left = 3 - self._failed_password_attempts
-                            if attempts_left > 0:
-                                self._error_with_image(
-                                    f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
-                                    "assets/wrong_password.png",
-                                )
-                            else:
-                                self._error_with_image(
-                                    "Wrong password.", "assets/wrong_password.png"
-                                )
+                            self._error_with_image(
+                                "Wrong password.", "assets/wrong_password.png"
+                            )
 
                     Clock.schedule_once(_handle_password_error, 0)
                 else:
@@ -2611,23 +2623,45 @@ class FrencoinApp(App):
             return
 
         # Check cooldown before attempting
-        if old_pw is not None and self._check_password_cooldown():
+        if self._check_password_cooldown():
+            return
+
+        # If wallet has password but none provided, treat as wrong password
+        if self.wallet.has_password() and not old_pw:
+            self._record_failed_password()
+            remaining = self._get_password_cooldown_seconds()
+            if remaining > 0:
+                minutes = remaining // 60
+                seconds = remaining % 60
+                if minutes > 0:
+                    time_str = f"{minutes}m {seconds}s"
+                else:
+                    time_str = f"{seconds}s"
+                self._error_with_image(
+                    f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                    "assets/wrong_password.png",
+                )
+            else:
+                self._error_with_image("Wrong password.", "assets/wrong_password.png")
             return
 
         try:
             self.wallet.update_password(old_pw, new_pw, encrypt_storage=bool(new_pw))
             # Success - reset failed attempts
             self._reset_password_attempts()
-            # Check if we need to show wallet restored popup first
-            if getattr(self, "_pending_wallet_restored_popup", False):
-                self._pending_wallet_restored_popup = False
-                self._info_with_image(
-                    "Wallet restored from seed.", "assets/wallet_restored.png"
-                )
-            else:
-                self._info_with_image(
-                    "Password updated.", "assets/password_updated.png"
-                )
+            # Only show success popup if password was actually set
+            if new_pw:
+                # Check if we need to show wallet restored popup first
+                if getattr(self, "_pending_wallet_restored_popup", False):
+                    self._pending_wallet_restored_popup = False
+                    self._info_with_image(
+                        "Wallet restored from seed.", "assets/wallet_restored.png"
+                    )
+                else:
+                    self._info_with_image(
+                        "Password updated.", "assets/password_updated.png"
+                    )
+            # If no password set, the warning popup already showed - no additional popup needed
         except Exception as e:
             err_str = str(e).lower()
             # Normalize error messages for security - don't reveal if password exists
@@ -2646,16 +2680,9 @@ class FrencoinApp(App):
                         "assets/wrong_password.png",
                     )
                 else:
-                    attempts_left = 3 - self._failed_password_attempts
-                    if attempts_left > 0:
-                        self._error_with_image(
-                            f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
-                            "assets/wrong_password.png",
-                        )
-                    else:
-                        self._error_with_image(
-                            "Wrong password.", "assets/wrong_password.png"
-                        )
+                    self._error_with_image(
+                        "Wrong password.", "assets/wrong_password.png"
+                    )
             else:
                 self._error(f"Could not update password: {e}")
 
@@ -2664,7 +2691,26 @@ class FrencoinApp(App):
 
     def _show_seed_with_password(self, password: Optional[str]):
         # Check cooldown before attempting
-        if password is not None and self._check_password_cooldown():
+        if self._check_password_cooldown():
+            return
+
+        # If wallet has password but none provided, treat as wrong password
+        if self.wallet.has_password() and not password:
+            self._record_failed_password()
+            remaining = self._get_password_cooldown_seconds()
+            if remaining > 0:
+                minutes = remaining // 60
+                seconds = remaining % 60
+                if minutes > 0:
+                    time_str = f"{minutes}m {seconds}s"
+                else:
+                    time_str = f"{seconds}s"
+                self._error_with_image(
+                    f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                    "assets/wrong_password.png",
+                )
+            else:
+                self._error_with_image("Wrong password.", "assets/wrong_password.png")
             return
 
         try:
@@ -2689,16 +2735,9 @@ class FrencoinApp(App):
                         "assets/wrong_password.png",
                     )
                 else:
-                    attempts_left = 3 - self._failed_password_attempts
-                    if attempts_left > 0:
-                        self._error_with_image(
-                            f"Wrong password.\n{attempts_left} attempt(s) left before cooldown.",
-                            "assets/wrong_password.png",
-                        )
-                    else:
-                        self._error_with_image(
-                            "Wrong password.", "assets/wrong_password.png"
-                        )
+                    self._error_with_image(
+                        "Wrong password.", "assets/wrong_password.png"
+                    )
             else:
                 self._error(f"Cannot access recovery phrase: {e}")
 
@@ -2886,7 +2925,7 @@ class FrencoinApp(App):
         img = Image(
             source=image_path,
             size_hint=(None, None),
-            size=(dp(180), dp(180)),
+            size=(dp(250), dp(250)),
             pos_hint={"center_x": 0.5},
             allow_stretch=True,
             keep_ratio=True,

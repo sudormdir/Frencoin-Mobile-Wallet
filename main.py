@@ -421,7 +421,7 @@ KV = """
                 Image:
                     source: 'assets/welcome_fren.png'
                     size_hint: None, None
-                    size: '220dp', '220dp'
+                    size: '250dp', '250dp'
                     allow_stretch: True
                     keep_ratio: True
 

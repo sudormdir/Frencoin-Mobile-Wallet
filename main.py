@@ -691,7 +691,7 @@ KV = """
             halign: 'center'
 
         Label:
-            text: "Not setting a password allows anyone with access to your device to extract the wallet file and steal all your coins. You are strongly advised to set one."
+            text: "Not setting a password allows anyone with access to your device to extract the wallet file and steal all your frens. You are strongly advised to set one."
             text_size: self.width, None
             size_hint_y: None
             height: self.texture_size[1]

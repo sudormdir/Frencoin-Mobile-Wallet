@@ -359,7 +359,7 @@ KV = """
             on_release: app.send_funds(root.send_to, root.amount)
 
 <RestoreWalletPopup>:
-    title: "NEWFREN!!!!!!"
+    title: "Welcome fren !!!!!!"
     size_hint: .9, .9
     auto_dismiss: False
     ScrollView:
@@ -520,6 +520,23 @@ KV = """
             text_size: self.width, None
             size_hint_y: None
             height: self.texture_size[1]
+
+        Label:
+            text: "WARNING:"
+            font_size: '24sp'
+            bold: True
+            color: (1, 0, 0, 1)
+            size_hint_y: None
+            height: self.texture_size[1]
+            halign: 'center'
+
+        Label:
+            text: "IF U LOSE UR WORDS U MIGHT LOSE UR FRENS!!!!!"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: (1, 0.3, 0.3, 1)
+            halign: 'center'
 
         Label:
             text: root.formatted_seed

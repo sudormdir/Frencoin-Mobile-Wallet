@@ -54,27 +54,46 @@ print("[FREN DEBUG] DGW_CHECKPOINTS len:", len(constants.net.DGW_CHECKPOINTS))
 print("[FREN DEBUG] GENESIS:", constants.net.GENESIS)
 
 
-def format_seed_4col(seed: str, words_per_row: int = 4) -> str:
+def format_seed_3col(seed: str, words_per_row: int = 3) -> str:
     """
-    Format a seed into numbered rows with `words_per_row` columns, e.g.:
-
-      1. word1    2. word2    3. word3    4. word4
-      5. word5    ...
-
-    Works for 12 words, but degrades gracefully for other lengths.
+    Format a seed into perfectly aligned columns with horizontal ordering.
+    For 12 words with 3 columns:
+       1. word1      2. word2      3. word3
+       4. word4      5. word5      6. word6
+       7. word7      8. word8      9. word9
+      10. word10    11. word11    12. word12
     """
     words = (seed or "").split()
     if not words:
         return ""
-    lines = []
+
     n = len(words)
-    for row_start in range(0, n, words_per_row):
+    num_rows = (n + words_per_row - 1) // words_per_row
+
+    # Find the max word length in each column for alignment
+    # Using horizontal ordering: word_idx = row * words_per_row + col
+    col_widths = []
+    for col_idx in range(words_per_row):
+        max_len = 0
+        for row_idx in range(num_rows):
+            word_idx = row_idx * words_per_row + col_idx
+            if word_idx < n:
+                max_len = max(max_len, len(words[word_idx]))
+        col_widths.append(max_len)
+
+    lines = []
+    for row_idx in range(num_rows):
         row_parts = []
-        for i, w in enumerate(
-            words[row_start : row_start + words_per_row], start=row_start + 1
-        ):
-            row_parts.append(f"{i:>2}. {w}")
-        lines.append("    ".join(row_parts))
+        for col_idx in range(words_per_row):
+            word_idx = row_idx * words_per_row + col_idx
+            if word_idx < n:
+                word_num = word_idx + 1
+                word = words[word_idx]
+                # Fixed width: "XX. word" with word padded to column width
+                entry = f"{word_num:>2}. {word:<{col_widths[col_idx]}}"
+                row_parts.append(entry)
+        lines.append("   ".join(row_parts))
+
     return "\n".join(lines)
 
 
@@ -82,23 +101,46 @@ def format_masked_seed(
     seed: str, missing_indices, words_per_row: int = 4, blank_placeholder: str = "____"
 ) -> str:
     """
-    Same as above, but blanks out words at indices in `missing_indices`.
+    Format seed with perfectly aligned columns using horizontal ordering,
+    blanking out words at indices in `missing_indices`.
     """
     words = (seed or "").split()
     if not words:
         return ""
+
     missing = set(missing_indices or [])
-    lines = []
     n = len(words)
-    for row_start in range(0, n, words_per_row):
+    num_rows = (n + words_per_row - 1) // words_per_row
+
+    # Find the max word length in each column for alignment
+    # Using horizontal ordering: word_idx = row * words_per_row + col
+    col_widths = []
+    for col_idx in range(words_per_row):
+        max_len = 0
+        for row_idx in range(num_rows):
+            word_idx = row_idx * words_per_row + col_idx
+            if word_idx < n:
+                show_word = (
+                    blank_placeholder if word_idx in missing else words[word_idx]
+                )
+                max_len = max(max_len, len(show_word))
+        col_widths.append(max_len)
+
+    lines = []
+    for row_idx in range(num_rows):
         row_parts = []
-        for i, w in enumerate(
-            words[row_start : row_start + words_per_row], start=row_start + 1
-        ):
-            idx0 = i - 1
-            show_word = blank_placeholder if idx0 in missing else w
-            row_parts.append(f"{i:>2}. {show_word}")
-        lines.append("    ".join(row_parts))
+        for col_idx in range(words_per_row):
+            word_idx = row_idx * words_per_row + col_idx
+            if word_idx < n:
+                word_num = word_idx + 1
+                show_word = (
+                    blank_placeholder if word_idx in missing else words[word_idx]
+                )
+                # Fixed width: "XX. word" with word padded to column width
+                entry = f"{word_num:>2}. {show_word:<{col_widths[col_idx]}}"
+                row_parts.append(entry)
+        lines.append("   ".join(row_parts))
+
     return "\n".join(lines)
 
 
@@ -448,6 +490,7 @@ KV = """
                 text_size: self.width, None
                 size_hint_y: None
                 height: self.texture_size[1]
+                halign: 'center'
 
         Label:
             text: "Type the missing words in order:"
@@ -544,6 +587,7 @@ KV = """
             text_size: self.width, None
             size_hint_y: None
             height: self.texture_size[1]
+            halign: 'center'
 
         Image:
             source: 'assets/seed_backup.png'
@@ -590,6 +634,7 @@ KV = """
             text_size: self.width, None
             size_hint_y: None
             height: self.texture_size[1]
+            halign: 'center'
 
         Image:
             source: 'assets/seed_backup2.png'
@@ -1231,7 +1276,7 @@ class SeedViewPopup(Popup):
     def on_full_seed(self, instance, value):
         # Build a 4-column numbered layout once the seed is assigned
         normalized = " ".join((value or "").split())
-        self.formatted_seed = format_seed_4col(normalized)
+        self.formatted_seed = format_seed_3col(normalized)
 
     def continue_to_quiz(self):
         app = App.get_running_app()
@@ -1252,7 +1297,7 @@ class SeedViewFromMenuPopup(Popup):
 
     def on_full_seed(self, instance, value):
         normalized = " ".join((value or "").split())
-        self.formatted_seed = format_seed_4col(normalized)
+        self.formatted_seed = format_seed_3col(normalized)
 
     def on_dismiss(self, *args):
         # Clear on the next frame, when we're no longer visible

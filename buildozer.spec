@@ -40,7 +40,7 @@ p4a.local_recipes = ./p4a-recipes
 # project and does not need to be downloaded from PyPI.  Buildozer
 # will package whatever is found inside the project directory.  If
 # you vendor other dependencies you can list them here too.
-requirements = python3,kivy,
+requirements = python3,kivy,pyjnius,android,
     attrs,aiohttp,multidict,yarl,filetype,idna,
     propcache,aiohappyeyeballs,aiosignal,frozenlist,python_socks,aiorpcx,certifi,dnspython,
     async-timeout,bitstring,
@@ -56,6 +56,12 @@ requirements = python3,kivy,
 
 icon.filename = assets/icon.png
 android.icon = assets/icon.png
+
+# Android backup settings - critical for wallet data persistence
+# Allow Android to back up app data
+android.allow_backup = True
+# Preserve app data when possible
+android.backup_rules =
 
 # (str) Orientation of the application.  We use portrait mode.
 orientation = portrait

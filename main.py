@@ -1,9 +1,39 @@
 import os
+import sys
 import random
 from decimal import Decimal
 import certifi
 
 from kivy.app import App
+from kivy.utils import platform
+
+
+def get_persistent_data_dir():
+    """
+    Get a persistent data directory that survives app updates on Android.
+    On Android, Kivy's user_data_dir can be unreliable and may get cleared.
+    This function uses android.storage.app_storage_path() which is more reliable.
+    """
+    if platform == 'android':
+        try:
+            from android.storage import app_storage_path
+            path = app_storage_path()
+            print(f"[WALLET] Using Android app_storage_path: {path}")
+            return path
+        except ImportError:
+            # Fallback if android.storage is not available
+            try:
+                from jnius import autoclass
+                Context = autoclass('android.content.Context')
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                activity = PythonActivity.mActivity
+                files_dir = activity.getFilesDir().getAbsolutePath()
+                print(f"[WALLET] Using Android getFilesDir: {files_dir}")
+                return files_dir
+            except Exception as e:
+                print(f"[WALLET] Android storage fallback failed: {e}")
+                return None
+    return None
 from kivy.lang import Builder
 from kivy.properties import (
     StringProperty,
@@ -1430,6 +1460,23 @@ class SetPasswordPopup(Popup):
         new_pw_stripped = (new_pw or "").strip()
         old_pw_stripped = (old_pw or "").strip() or None
 
+        app = App.get_running_app()
+        
+        # Check cooldown first
+        if app and app._check_password_cooldown():
+            return
+        
+        # Verify old password first before doing anything else
+        if app and app.wallet and app.wallet.has_password():
+            try:
+                app.wallet.check_password(old_pw_stripped)
+            except Exception:
+                # Record failed attempt and show wrong password popup
+                app._record_failed_password()
+                self.dismiss()
+                app._error_with_image("Wrong password.", "assets/wrong_password.png")
+                return
+
         # If no new password, show warning popup
         if not new_pw_stripped:
             self.dismiss()
@@ -1438,7 +1485,6 @@ class SetPasswordPopup(Popup):
             ).open()
             return
 
-        app = App.get_running_app()
         try:
             if app and hasattr(app, "set_wallet_password"):
                 app.set_wallet_password(old_pw_stripped, new_pw_stripped)
@@ -2044,11 +2090,41 @@ class FrencoinApp(App):
 
     # ---------- Wallet / network setup ----------
 
+    def _get_wallet_dir(self):
+        """Get the most reliable wallet directory for the current platform."""
+        # Try to use Android's persistent storage first
+        android_dir = get_persistent_data_dir()
+        if android_dir:
+            return android_dir
+        # Fallback to Kivy's user_data_dir
+        return self.user_data_dir
+
     def _init_wallet(self):
         self.main_screen.status = "Starting Electrum network…"
-        wallet_dir = self.user_data_dir
+        wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
+        
+        # Log wallet path and existence for debugging persistence issues
+        print(f"[WALLET] Platform: {platform}")
+        print(f"[WALLET] Data dir: {wallet_dir}")
+        print(f"[WALLET] Kivy user_data_dir: {self.user_data_dir}")
+        print(f"[WALLET] Wallet path: {wallet_path}")
+        print(f"[WALLET] Wallet file exists: {os.path.exists(wallet_path)}")
+        if os.path.exists(wallet_path):
+            print(f"[WALLET] Wallet file size: {os.path.getsize(wallet_path)} bytes")
+        
+        # Check if wallet exists in old location and migrate if needed
+        old_wallet_path = os.path.join(self.user_data_dir, "default_wallet")
+        if not os.path.exists(wallet_path) and os.path.exists(old_wallet_path) and wallet_dir != self.user_data_dir:
+            print(f"[WALLET] Migrating wallet from old location: {old_wallet_path}")
+            try:
+                import shutil
+                os.makedirs(wallet_dir, exist_ok=True)
+                shutil.copy2(old_wallet_path, wallet_path)
+                print(f"[WALLET] Migration successful!")
+            except Exception as e:
+                print(f"[WALLET] Migration failed: {e}")
 
         # Direct ElectrumX IP + SSL port
         self.config = SimpleConfig(
@@ -2129,9 +2205,10 @@ class FrencoinApp(App):
         self.refresh_wallet()
 
     def _create_new_wallet(self):
-        wallet_dir = self.user_data_dir
+        wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
+        print(f"[WALLET] Creating new wallet at: {wallet_path}")
         assert self.config is not None
         result = create_new_wallet(
             path=wallet_path,
@@ -2143,9 +2220,15 @@ class FrencoinApp(App):
         self.wallet = result["wallet"]
         seed = result["seed"]
 
-        # Ensure wallet is saved to disk
+        # Ensure wallet is saved to disk and verify
         try:
             self.wallet.save_db()
+            # Verify file was actually created
+            if os.path.exists(wallet_path):
+                file_size = os.path.getsize(wallet_path)
+                print(f"[WALLET] Wallet saved successfully, file size: {file_size} bytes")
+            else:
+                print(f"[WALLET] WARNING: Wallet file not found after save_db()!")
         except Exception as e:
             print(f"[WALLET] Error saving wallet after creation: {e}")
 
@@ -2163,9 +2246,10 @@ class FrencoinApp(App):
 
     def _restore_wallet_from_seed(self, seed_text: str):
         # Restore wallet from a 12-word seed and skip the quiz
-        wallet_dir = self.user_data_dir
+        wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
+        print(f"[WALLET] Restoring wallet at: {wallet_path}")
         from electrum.wallet import restore_wallet_from_text
 
         assert self.config is not None
@@ -2180,9 +2264,15 @@ class FrencoinApp(App):
         )
         self.wallet = d["wallet"]
 
-        # Ensure wallet is saved to disk
+        # Ensure wallet is saved to disk and verify
         try:
             self.wallet.save_db()
+            # Verify file was actually created
+            if os.path.exists(wallet_path):
+                file_size = os.path.getsize(wallet_path)
+                print(f"[WALLET] Wallet saved successfully, file size: {file_size} bytes")
+            else:
+                print(f"[WALLET] WARNING: Wallet file not found after save_db()!")
         except Exception as e:
             print(f"[WALLET] Error saving wallet after restore: {e}")
 
@@ -2292,6 +2382,7 @@ class FrencoinApp(App):
         if self.wallet:
             try:
                 self.wallet.save_db()
+                print("[WALLET] Saved wallet on pause")
             except Exception as e:
                 print(f"[WALLET] Error saving wallet on pause: {e}")
         return True
@@ -2326,6 +2417,7 @@ class FrencoinApp(App):
         if self.wallet:
             try:
                 self.wallet.save_db()
+                print("[WALLET] Saved wallet on stop")
             except Exception as e:
                 print(f"[WALLET] Error saving wallet on stop: {e}")
         try:

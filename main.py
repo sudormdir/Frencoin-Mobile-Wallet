@@ -1,11 +1,47 @@
 import os
 import sys
 import random
+import secrets
 from decimal import Decimal
 import certifi
 
 from kivy.app import App
 from kivy.utils import platform
+
+
+def secure_clear_string(s: str) -> None:
+    """
+    Attempt to overwrite a string's contents in memory.
+    Note: Python strings are immutable, so this is best-effort.
+    The string object itself should be dereferenced after calling this.
+    """
+    if not s:
+        return
+    try:
+        import ctypes
+        # Get the address of the string's buffer
+        # This is CPython-specific and may not work on all platforms
+        str_len = len(s)
+        if str_len > 0:
+            # Overwrite with random data
+            ptr = ctypes.cast(id(s), ctypes.POINTER(ctypes.c_char))
+            # String data starts after the PyObject header (platform-dependent)
+            # This is a best-effort approach
+            offset = sys.getsizeof('')
+            for i in range(str_len):
+                try:
+                    ptr[offset + i] = b'\x00'
+                except Exception:
+                    break
+    except Exception:
+        pass  # Best effort - some platforms won't support this
+
+
+def secure_clear_bytearray(ba: bytearray) -> None:
+    """Securely zero out a bytearray."""
+    if ba:
+        for i in range(len(ba)):
+            ba[i] = 0
 
 
 def get_persistent_data_dir():
@@ -785,7 +821,7 @@ KV = """
             halign: 'center'
 
         Label:
-            text: "Not setting a password allows anyone with access to your device to extract the wallet file and steal all your frens. You are strongly advised to set one."
+            text: "Not setting a password allows anyone with access to your device or backups to extract the wallet file and steal all your frens. You are strongly advised to set one."
             text_size: self.width, None
             size_hint_y: None
             height: self.texture_size[1]
@@ -1273,6 +1309,17 @@ class SeedQuizPopup(Popup):
                 Window.softinput_mode = self._prev_softinput
         except Exception:
             pass
+        # Don't clear if navigating back to seed view (seed still needed)
+        if getattr(self, '_going_back_to_seed', False):
+            self._going_back_to_seed = False
+            self.full_seed = ""
+            self.display_seed = ""
+            return
+        # Securely clear seed from memory
+        secure_clear_string(self.full_seed)
+        secure_clear_string(self.display_seed)
+        self.full_seed = ""
+        self.display_seed = ""
 
     def check(self, answers):
         words = self.full_seed.split()
@@ -1293,7 +1340,9 @@ class SeedQuizPopup(Popup):
         When they hit 'Continue to quiz' again, a fresh quiz is generated.
         """
         app = App.get_running_app()
-        seed = self.full_seed
+        # Create a true copy of seed before dismiss clears it
+        seed = str(self.full_seed)
+        self._going_back_to_seed = True  # Flag to skip clearing on dismiss
         self.dismiss()
         if app and hasattr(app, "open_seed_backup_flow"):
             app.open_seed_backup_flow(seed)
@@ -1310,11 +1359,22 @@ class SeedViewPopup(Popup):
 
     def continue_to_quiz(self):
         app = App.get_running_app()
-        seed = self.full_seed
+        # Create a true copy of seed (not just a reference) before dismiss clears it
+        seed = str(self.full_seed)
+        self._continuing_to_quiz = True  # Flag to skip clearing on dismiss
         self.dismiss()
         app.open_seed_quiz(seed)
 
     def on_dismiss(self):
+        # Don't clear if we're continuing to quiz (seed still needed)
+        if getattr(self, '_continuing_to_quiz', False):
+            self._continuing_to_quiz = False
+            self.full_seed = ""
+            self.formatted_seed = ""
+            return
+        # Securely clear seed from memory
+        secure_clear_string(self.full_seed)
+        secure_clear_string(self.formatted_seed)
         self.full_seed = ""
         self.formatted_seed = ""
 
@@ -1334,6 +1394,9 @@ class SeedViewFromMenuPopup(Popup):
         Clock.schedule_once(self._clear_seed, 0)
 
     def _clear_seed(self, dt):
+        # Securely clear seed from memory
+        secure_clear_string(self.full_seed)
+        secure_clear_string(self.formatted_seed)
         self.full_seed = ""
         self.formatted_seed = ""
 
@@ -1461,11 +1524,11 @@ class SetPasswordPopup(Popup):
         old_pw_stripped = (old_pw or "").strip() or None
 
         app = App.get_running_app()
-        
+
         # Check cooldown first
         if app and app._check_password_cooldown():
             return
-        
+
         # Verify old password first before doing anything else
         if app and app.wallet and app.wallet.has_password():
             try:
@@ -2104,7 +2167,7 @@ class FrencoinApp(App):
         wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
-        
+
         # Log wallet path and existence for debugging persistence issues
         print(f"[WALLET] Platform: {platform}")
         print(f"[WALLET] Data dir: {wallet_dir}")
@@ -2113,7 +2176,7 @@ class FrencoinApp(App):
         print(f"[WALLET] Wallet file exists: {os.path.exists(wallet_path)}")
         if os.path.exists(wallet_path):
             print(f"[WALLET] Wallet file size: {os.path.getsize(wallet_path)} bytes")
-        
+
         # Check if wallet exists in old location and migrate if needed
         old_wallet_path = os.path.join(self.user_data_dir, "default_wallet")
         if not os.path.exists(wallet_path) and os.path.exists(old_wallet_path) and wallet_dir != self.user_data_dir:
@@ -2148,36 +2211,27 @@ class FrencoinApp(App):
 
         if os.path.exists(wallet_path):
             try:
+                print("[WALLET] Loading existing wallet...")
+                
                 storage = WalletStorage(wallet_path)
-                db = WalletDB(storage.read(), manual_upgrades=False)
-                self.wallet = Wallet(db, config=self.config)
-                # Store reference to storage for saving
-                self.wallet.storage = storage
-                self.wallet.start_network(self.network)
-
-                # Restore quiz state
-                self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
-                self.main_screen.quiz_completed = self.seed_quiz_done
-
-                # Restore saved display address from wallet DB
-                saved_addr = self.wallet.db.get("current_display_address", None)
-                if saved_addr and saved_addr in self.wallet.get_receiving_addresses():
-                    self._current_display_address = saved_addr
-
-                # If seed quiz wasn't completed, resume it
-                if not self.seed_quiz_done:
-                    try:
-                        seed = self.wallet.get_seed(None)
-                        if seed:
-                            # Schedule seed view popup after UI is ready
-                            Clock.schedule_once(
-                                lambda dt: self.open_seed_backup_flow(seed), 0.5
-                            )
-                    except Exception:
-                        # Wallet might be encrypted or restored from xpub
-                        pass
+                print("[WALLET] Storage loaded")
+                
+                # Check if wallet is encrypted - if so, we need password before loading
+                if storage.is_encrypted():
+                    print("[WALLET] Wallet is encrypted, need password to decrypt")
+                    # Store storage reference and prompt for password
+                    self._pending_encrypted_storage = storage
+                    self._pending_wallet_path = wallet_path
+                    # Schedule password prompt on next frame
+                    Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.1)
+                    return
+                
+                # Unencrypted wallet - load directly
+                print("[WALLET] Wallet is not encrypted, loading directly")
+                self._load_wallet_from_storage(storage, wallet_path)
             except WalletFileException as e:
                 # Corrupt/unknown wallet type — back it up and force restore flow
+                print(f"[WALLET] WalletFileException: {e}")
                 try:
                     backup_path = wallet_path + ".corrupt"
                     os.replace(wallet_path, backup_path)
@@ -2188,6 +2242,19 @@ class FrencoinApp(App):
                 self.main_screen.quiz_completed = False
                 self._error(
                     f"Wallet file error: {e}. Please restore or create a new wallet."
+                )
+                RestoreWalletPopup().open()
+                return
+            except Exception as e:
+                # Catch ANY other exception to prevent silent failures
+                print(f"[WALLET] Unexpected error loading wallet: {e}")
+                import traceback
+                traceback.print_exc()
+                self.wallet = None
+                self.seed_quiz_done = False
+                self.main_screen.quiz_completed = False
+                self._error(
+                    f"Error loading wallet: {e}. Please restore or create a new wallet."
                 )
                 RestoreWalletPopup().open()
                 return
@@ -2203,6 +2270,121 @@ class FrencoinApp(App):
             RestoreWalletPopup().open()
 
         self.refresh_wallet()
+
+    def _prompt_for_wallet_password(self):
+        """Show password prompt for encrypted wallet."""
+        from electrum.util import InvalidPassword
+        
+        def on_password_entered(password):
+            storage = self._pending_encrypted_storage
+            wallet_path = self._pending_wallet_path
+            
+            if not storage or not wallet_path:
+                self._error("Wallet loading error. Please restart the app.")
+                return
+            
+            try:
+                # Try to decrypt with the provided password
+                storage.decrypt(password)
+                print("[WALLET] Wallet decrypted successfully")
+                
+                # Clear pending references
+                self._pending_encrypted_storage = None
+                self._pending_wallet_path = None
+                
+                # Now load the wallet
+                self._load_wallet_from_storage(storage, wallet_path)
+                
+            except InvalidPassword:
+                self._record_failed_password()
+                remaining = self._get_password_cooldown_seconds()
+                if remaining > 0:
+                    minutes = remaining // 60
+                    seconds = remaining % 60
+                    if minutes > 0:
+                        time_str = f"{minutes}m {seconds}s"
+                    else:
+                        time_str = f"{seconds}s"
+                    self._error_with_image(
+                        f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
+                        "assets/wrong_password.png",
+                    )
+                else:
+                    self._error_with_image("Wrong password.", "assets/wrong_password.png")
+                # Re-prompt for password
+                Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.5)
+            except Exception as e:
+                print(f"[WALLET] Error decrypting wallet: {e}")
+                import traceback
+                traceback.print_exc()
+                self._error(f"Error decrypting wallet: {e}")
+        
+        # Check cooldown first
+        if self._check_password_cooldown():
+            Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 1.0)
+            return
+        
+        EnterPasswordPopup(submit_cb=on_password_entered).open()
+
+    def _load_wallet_from_storage(self, storage, wallet_path):
+        """Load wallet from storage object (must be decrypted if encrypted)."""
+        try:
+            # CRITICAL: Pass storage to WalletDB so save_db() works correctly
+            db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
+            print("[WALLET] DB loaded")
+            wallet_type = db.get('wallet_type')
+            print(f"[WALLET] Wallet type from DB: {wallet_type}")
+            
+            self.wallet = Wallet(db, config=self.config)
+            print("[WALLET] Wallet object created")
+            # Store reference to storage for saving (belt and suspenders)
+            self.wallet.storage = storage
+            self.wallet.start_network(self.network)
+            print("[WALLET] Wallet started on network")
+
+            # Restore quiz state
+            self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
+            self.main_screen.quiz_completed = self.seed_quiz_done
+            print(f"[WALLET] Quiz state restored: {self.seed_quiz_done}")
+
+            # Restore saved display address from wallet DB
+            saved_addr = self.wallet.db.get("current_display_address", None)
+            if saved_addr and saved_addr in self.wallet.get_receiving_addresses():
+                self._current_display_address = saved_addr
+                # Ensure current address is in displayed_addresses list
+                try:
+                    displayed = self.wallet.db.get("displayed_addresses", [])
+                    if saved_addr not in displayed:
+                        displayed.append(saved_addr)
+                        self.wallet.db.put("displayed_addresses", displayed)
+                        self.wallet.save_db()
+                except Exception:
+                    pass
+
+            # If seed quiz wasn't completed, resume it
+            if not self.seed_quiz_done:
+                try:
+                    seed = self.wallet.get_seed(None)
+                    if seed:
+                        # Schedule seed view popup after UI is ready
+                        Clock.schedule_once(
+                            lambda dt: self.open_seed_backup_flow(seed), 0.5
+                        )
+                except Exception:
+                    # Wallet might be encrypted or restored from xpub
+                    pass
+            
+            print("[WALLET] Wallet loaded successfully!")
+            self.refresh_wallet()
+            
+        except WalletFileException as e:
+            print(f"[WALLET] WalletFileException in _load_wallet_from_storage: {e}")
+            raise
+        except Exception as e:
+            print(f"[WALLET] Error in _load_wallet_from_storage: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def _create_new_wallet(self):
         wallet_dir = self._get_wallet_dir()
@@ -2220,7 +2402,27 @@ class FrencoinApp(App):
         self.wallet = result["wallet"]
         seed = result["seed"]
 
-        # Ensure wallet is saved to disk and verify
+        # create_new_wallet already sets up storage properly on db
+        # Just copy the reference to wallet.storage for convenience
+        if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
+            self.wallet.storage = self.wallet.db.storage
+            print(f"[WALLET] Using existing db.storage reference")
+        else:
+            # Fallback: only create new storage if db doesn't have one (shouldn't happen)
+            print(f"[WALLET] WARNING: db.storage is None, creating new storage")
+            storage = WalletStorage(wallet_path)
+            self.wallet.db.storage = storage
+            self.wallet.storage = storage
+            
+        # Verify wallet_type was set correctly
+        wallet_type = self.wallet.db.get('wallet_type')
+        print(f"[WALLET] Wallet type after creation: {wallet_type}")
+        if wallet_type is None:
+            print("[WALLET] WARNING: wallet_type is None! Setting to 'standard'")
+            self.wallet.db.put('wallet_type', 'standard')
+
+        # Force save to ensure data is on disk
+        self.wallet.db.set_modified(True)
         try:
             self.wallet.save_db()
             # Verify file was actually created
@@ -2263,14 +2465,57 @@ class FrencoinApp(App):
             gap_limit=None,
         )
         self.wallet = d["wallet"]
+        
+        # restore_wallet_from_text already sets up storage properly on db
+        # Just copy the reference to wallet.storage for convenience
+        if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
+            self.wallet.storage = self.wallet.db.storage
+            print(f"[WALLET] Using existing db.storage reference")
+        else:
+            # Fallback: only create new storage if db doesn't have one (shouldn't happen)
+            print(f"[WALLET] WARNING: db.storage is None, creating new storage")
+            storage = WalletStorage(wallet_path)
+            self.wallet.db.storage = storage
+            self.wallet.storage = storage
 
-        # Ensure wallet is saved to disk and verify
+        # Verify wallet_type was set correctly
+        wallet_type = self.wallet.db.get('wallet_type')
+        print(f"[WALLET] Wallet type after restore (before save): {wallet_type}")
+        if wallet_type is None:
+            print("[WALLET] WARNING: wallet_type is None! Setting to 'standard'")
+            self.wallet.db.put('wallet_type', 'standard')
+
+        # Force save to ensure data is on disk
+        self.wallet.db.set_modified(True)
         try:
             self.wallet.save_db()
             # Verify file was actually created
             if os.path.exists(wallet_path):
                 file_size = os.path.getsize(wallet_path)
                 print(f"[WALLET] Wallet saved successfully, file size: {file_size} bytes")
+                # Log wallet type to debug the issue
+                try:
+                    wallet_type = self.wallet.db.get('wallet_type')
+                    print(f"[WALLET] Wallet type after restore: {wallet_type}")
+                except Exception:
+                    pass
+                
+                # DEBUG: Verify wallet_type is actually in the saved file
+                try:
+                    with open(wallet_path, 'r', encoding='utf-8') as f:
+                        saved_content = f.read()
+                    if 'wallet_type' in saved_content:
+                        import re
+                        match = re.search(r'"wallet_type"\s*:\s*"([^"]*)"', saved_content)
+                        if match:
+                            print(f"[WALLET] VERIFIED in file: wallet_type = {match.group(1)}")
+                        else:
+                            print("[WALLET] wallet_type in file but couldn't parse")
+                    else:
+                        print("[WALLET] CRITICAL: wallet_type NOT in saved file!")
+                        print(f"[WALLET] DB data keys: {list(self.wallet.db.data.keys())[:10]}")
+                except Exception as e:
+                    print(f"[WALLET] Error verifying saved file: {e}")
             else:
                 print(f"[WALLET] WARNING: Wallet file not found after save_db()!")
         except Exception as e:
@@ -2661,7 +2906,12 @@ class FrencoinApp(App):
 
                 Clock.schedule_once(_update_status_signing, 0)
                 print("[TX] Signing transaction...")
-                wallet.sign_transaction(tx, password=password)
+                try:
+                    wallet.sign_transaction(tx, password=password)
+                finally:
+                    # Clear password from memory after use
+                    if password:
+                        secure_clear_string(password)
                 print("[TX] Transaction signed")
 
                 def _update_status_broadcast(dt):
@@ -2901,13 +3151,21 @@ class FrencoinApp(App):
                 self._error_with_image("Wrong password.", "assets/wrong_password.png")
             return
 
+        error_occurred = None
         try:
             seed = self.wallet.get_seed(password)
             # Success - reset failed attempts
             self._reset_password_attempts()
             SeedViewFromMenuPopup(full_seed=seed).open()
         except Exception as e:
-            err_str = str(e).lower()
+            error_occurred = e
+        finally:
+            # Clear password from memory after use
+            if password:
+                secure_clear_string(password)
+
+        if error_occurred:
+            err_str = str(error_occurred).lower()
             if "password" in err_str or "incorrect" in err_str or "wrong" in err_str:
                 self._record_failed_password()
                 remaining = self._get_password_cooldown_seconds()
@@ -2927,7 +3185,7 @@ class FrencoinApp(App):
                         "Wrong password.", "assets/wrong_password.png"
                     )
             else:
-                self._error(f"Cannot access recovery phrase: {e}")
+                self._error(f"Cannot access recovery phrase: {error_occurred}")
 
     def open_seed_backup_flow(self, seed: str):
         self._last_seed_phrase = seed
@@ -2952,7 +3210,7 @@ class FrencoinApp(App):
             self._error("Seed phrase is unexpected length.")
             return
 
-        missing_indices = sorted(random.sample(range(len(words)), 3))
+        missing_indices = sorted(secrets.SystemRandom().sample(range(len(words)), 3))
         masked_display = format_masked_seed(seed, missing_indices)
 
         popup = SeedQuizPopup(
@@ -2986,6 +3244,9 @@ class FrencoinApp(App):
                 self.config.set_key("seed_quiz_done", True)
             except Exception:
                 pass
+        # Securely clear seed phrase from memory
+        if self._last_seed_phrase:
+            secure_clear_string(self._last_seed_phrase)
         self._last_seed_phrase = None
         Clock.schedule_once(
             lambda dt: self.open_password_dialog(first_time_setup=True), 0.1
@@ -3232,6 +3493,22 @@ class FrencoinApp(App):
                 self._current_display_address = self.wallet.get_receiving_address()
             except Exception:
                 pass
+
+        # Persist the current address if we just set it for the first time
+        if self._current_display_address:
+            try:
+                saved_addr = self.wallet.db.get("current_display_address", None)
+                if saved_addr != self._current_display_address:
+                    self.wallet.db.put("current_display_address", self._current_display_address)
+                    # Also add to displayed_addresses list
+                    displayed = self.wallet.db.get("displayed_addresses", [])
+                    if self._current_display_address not in displayed:
+                        displayed.append(self._current_display_address)
+                        self.wallet.db.put("displayed_addresses", displayed)
+                    self.wallet.save_db()
+            except Exception:
+                pass
+
         if self.main_screen:
             self.main_screen.address = self._current_display_address or ""
 
@@ -3359,6 +3636,21 @@ class FrencoinApp(App):
         if not self._current_display_address:
             try:
                 self._current_display_address = self.wallet.get_receiving_address()
+            except Exception:
+                pass
+
+        # Persist the current address if we just set it for the first time
+        if self._current_display_address:
+            try:
+                saved_addr = self.wallet.db.get("current_display_address", None)
+                if saved_addr != self._current_display_address:
+                    self.wallet.db.put("current_display_address", self._current_display_address)
+                    # Also add to displayed_addresses list
+                    displayed = self.wallet.db.get("displayed_addresses", [])
+                    if self._current_display_address not in displayed:
+                        displayed.append(self._current_display_address)
+                        self.wallet.db.put("displayed_addresses", displayed)
+                    self.wallet.save_db()
             except Exception:
                 pass
 

@@ -57,11 +57,9 @@ requirements = python3,kivy,pyjnius,android,
 icon.filename = assets/icon.png
 android.icon = assets/icon.png
 
-# Android backup settings - critical for wallet data persistence
-# Allow Android to back up app data
+# Android backup - allows wallet data to survive device reset/migration
+# IMPORTANT: Only safe because wallet files are encrypted with user's password
 android.allow_backup = True
-# Preserve app data when possible
-android.backup_rules =
 
 # (str) Orientation of the application.  We use portrait mode.
 orientation = portrait

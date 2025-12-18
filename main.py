@@ -44,6 +44,82 @@ def secure_clear_bytearray(ba: bytearray) -> None:
             ba[i] = 0
 
 
+def set_secure_file_permissions(file_path: str) -> None:
+    """
+    Set secure file permissions (owner read/write only) on wallet files.
+    This prevents other users/apps from reading sensitive wallet data.
+    On Android, this is less critical as app sandboxing provides isolation,
+    but it's still good practice.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return
+    try:
+        # Set file permissions to 0o600 (owner read/write only)
+        # This is equivalent to -rw------- on Unix systems
+        os.chmod(file_path, 0o600)
+    except Exception:
+        pass  # Best effort - some platforms may not support chmod
+
+
+def set_secure_dir_permissions(dir_path: str) -> None:
+    """
+    Set secure directory permissions (owner read/write/execute only).
+    """
+    if not dir_path or not os.path.exists(dir_path):
+        return
+    try:
+        # Set directory permissions to 0o700 (owner read/write/execute only)
+        os.chmod(dir_path, 0o700)
+    except Exception:
+        pass  # Best effort
+
+
+# Track scheduled clipboard clear events so we can cancel them if needed
+_clipboard_clear_event = None
+
+
+def clipboard_copy_with_timeout(text: str, timeout_seconds: int = 60) -> None:
+    """
+    Copy text to clipboard and automatically clear it after a timeout.
+    This prevents sensitive data (addresses, seeds, TXIDs) from remaining
+    in clipboard indefinitely where other apps could access it.
+    
+    Args:
+        text: The text to copy to clipboard
+        timeout_seconds: How long before clipboard is cleared (default 60 seconds)
+    """
+    global _clipboard_clear_event
+    from kivy.core.clipboard import Clipboard
+    from kivy.clock import Clock
+    
+    # Cancel any pending clipboard clear
+    if _clipboard_clear_event is not None:
+        try:
+            _clipboard_clear_event.cancel()
+        except Exception:
+            pass
+    
+    # Copy to clipboard
+    try:
+        Clipboard.copy(text)
+    except Exception:
+        return
+    
+    # Schedule clipboard clear
+    def clear_clipboard(dt):
+        global _clipboard_clear_event
+        try:
+            # Only clear if clipboard still contains our text
+            current = Clipboard.paste()
+            if current == text:
+                Clipboard.copy("")
+        except Exception:
+            pass
+        _clipboard_clear_event = None
+    
+    _clipboard_clear_event = Clock.schedule_once(clear_clipboard, timeout_seconds)
+
+
 def get_persistent_data_dir():
     """
     Get a persistent data directory that survives app updates on Android.
@@ -54,7 +130,6 @@ def get_persistent_data_dir():
         try:
             from android.storage import app_storage_path
             path = app_storage_path()
-            print(f"[WALLET] Using Android app_storage_path: {path}")
             return path
         except ImportError:
             # Fallback if android.storage is not available
@@ -64,10 +139,8 @@ def get_persistent_data_dir():
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 activity = PythonActivity.mActivity
                 files_dir = activity.getFilesDir().getAbsolutePath()
-                print(f"[WALLET] Using Android getFilesDir: {files_dir}")
                 return files_dir
-            except Exception as e:
-                print(f"[WALLET] Android storage fallback failed: {e}")
+            except Exception:
                 return None
     return None
 from kivy.lang import Builder
@@ -114,10 +187,7 @@ from electrum.util import (
 )
 from electrum import constants
 
-print("[FREN DEBUG] NET:", constants.net.NET_NAME)
-print("[FREN DEBUG] CHECKPOINTS len:", len(constants.net.CHECKPOINTS))
-print("[FREN DEBUG] DGW_CHECKPOINTS len:", len(constants.net.DGW_CHECKPOINTS))
-print("[FREN DEBUG] GENESIS:", constants.net.GENESIS)
+# Network configuration loaded
 
 
 def format_seed_3col(seed: str, words_per_row: int = 3) -> str:
@@ -1482,7 +1552,7 @@ class AddressListPopup(Popup):
         addr = getattr(btn, "addr", "")
         if addr:
             try:
-                Clipboard.copy(addr)
+                clipboard_copy_with_timeout(addr, timeout_seconds=60)
                 btn.text = "Copied!"
                 Clock.schedule_once(lambda dt: self.refresh_address_list(), 1.5)
             except Exception:
@@ -2124,8 +2194,10 @@ class FrencoinApp(App):
         self._pending_subtract = False
         self._current_display_address = None  # Stable address shown in UI
         # Password attempt tracking for brute-force protection
+        # These will be loaded from persistent storage in _init_wallet
         self._failed_password_attempts = 0
         self._password_cooldown_until = 0  # Unix timestamp when cooldown ends
+        self._security_state_file = None  # Path to security state file
 
     def build(self):
         # Use 'pan' mode so keyboard pushes content up when needed
@@ -2148,8 +2220,8 @@ class FrencoinApp(App):
         if self.wallet:
             try:
                 self.wallet.save_db()
-            except Exception as e:
-                print(f"[WALLET] Periodic save error: {e}")
+            except Exception:
+                pass
 
     # ---------- Wallet / network setup ----------
 
@@ -2162,32 +2234,70 @@ class FrencoinApp(App):
         # Fallback to Kivy's user_data_dir
         return self.user_data_dir
 
+    def _load_security_state(self):
+        """Load brute-force protection state from persistent storage."""
+        import time
+        import json
+        
+        if not self._security_state_file:
+            return
+        
+        try:
+            if os.path.exists(self._security_state_file):
+                with open(self._security_state_file, 'r') as f:
+                    data = json.load(f)
+                    self._failed_password_attempts = int(data.get('failed_attempts', 0))
+                    cooldown_until = float(data.get('cooldown_until', 0))
+                    # Only restore cooldown if it hasn't expired
+                    if cooldown_until > time.time():
+                        self._password_cooldown_until = cooldown_until
+                    else:
+                        self._password_cooldown_until = 0
+        except Exception:
+            pass
+
+    def _save_security_state(self):
+        """Save brute-force protection state to persistent storage."""
+        import json
+        
+        if not self._security_state_file:
+            return
+        
+        try:
+            data = {
+                'failed_attempts': self._failed_password_attempts,
+                'cooldown_until': self._password_cooldown_until
+            }
+            with open(self._security_state_file, 'w') as f:
+                json.dump(data, f)
+            set_secure_file_permissions(self._security_state_file)
+        except Exception:
+            pass
+
     def _init_wallet(self):
         self.main_screen.status = "Starting Electrum network…"
         wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
+        set_secure_dir_permissions(wallet_dir)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
+        
+        # Initialize and load brute-force protection state
+        self._security_state_file = os.path.join(wallet_dir, ".security_state")
+        self._load_security_state()
 
-        # Log wallet path and existence for debugging persistence issues
-        print(f"[WALLET] Platform: {platform}")
-        print(f"[WALLET] Data dir: {wallet_dir}")
-        print(f"[WALLET] Kivy user_data_dir: {self.user_data_dir}")
-        print(f"[WALLET] Wallet path: {wallet_path}")
-        print(f"[WALLET] Wallet file exists: {os.path.exists(wallet_path)}")
-        if os.path.exists(wallet_path):
-            print(f"[WALLET] Wallet file size: {os.path.getsize(wallet_path)} bytes")
+
 
         # Check if wallet exists in old location and migrate if needed
         old_wallet_path = os.path.join(self.user_data_dir, "default_wallet")
         if not os.path.exists(wallet_path) and os.path.exists(old_wallet_path) and wallet_dir != self.user_data_dir:
-            print(f"[WALLET] Migrating wallet from old location: {old_wallet_path}")
             try:
                 import shutil
                 os.makedirs(wallet_dir, exist_ok=True)
+                set_secure_dir_permissions(wallet_dir)
                 shutil.copy2(old_wallet_path, wallet_path)
-                print(f"[WALLET] Migration successful!")
-            except Exception as e:
-                print(f"[WALLET] Migration failed: {e}")
+                set_secure_file_permissions(wallet_path)
+            except Exception:
+                pass
 
         # Direct ElectrumX IP + SSL port
         self.config = SimpleConfig(
@@ -2211,14 +2321,10 @@ class FrencoinApp(App):
 
         if os.path.exists(wallet_path):
             try:
-                print("[WALLET] Loading existing wallet...")
-                
                 storage = WalletStorage(wallet_path)
-                print("[WALLET] Storage loaded")
                 
                 # Check if wallet is encrypted - if so, we need password before loading
                 if storage.is_encrypted():
-                    print("[WALLET] Wallet is encrypted, need password to decrypt")
                     # Store storage reference and prompt for password
                     self._pending_encrypted_storage = storage
                     self._pending_wallet_path = wallet_path
@@ -2227,11 +2333,9 @@ class FrencoinApp(App):
                     return
                 
                 # Unencrypted wallet - load directly
-                print("[WALLET] Wallet is not encrypted, loading directly")
                 self._load_wallet_from_storage(storage, wallet_path)
             except WalletFileException as e:
                 # Corrupt/unknown wallet type — back it up and force restore flow
-                print(f"[WALLET] WalletFileException: {e}")
                 try:
                     backup_path = wallet_path + ".corrupt"
                     os.replace(wallet_path, backup_path)
@@ -2241,20 +2345,17 @@ class FrencoinApp(App):
                 self.seed_quiz_done = False
                 self.main_screen.quiz_completed = False
                 self._error(
-                    f"Wallet file error: {e}. Please restore or create a new wallet."
+                    f"Wallet file error. Please restore or create a new wallet."
                 )
                 RestoreWalletPopup().open()
                 return
             except Exception as e:
                 # Catch ANY other exception to prevent silent failures
-                print(f"[WALLET] Unexpected error loading wallet: {e}")
-                import traceback
-                traceback.print_exc()
                 self.wallet = None
                 self.seed_quiz_done = False
                 self.main_screen.quiz_completed = False
                 self._error(
-                    f"Error loading wallet: {e}. Please restore or create a new wallet."
+                    f"Error loading wallet. Please restore or create a new wallet."
                 )
                 RestoreWalletPopup().open()
                 return
@@ -2275,6 +2376,31 @@ class FrencoinApp(App):
         """Show password prompt for encrypted wallet."""
         from electrum.util import InvalidPassword
         
+        # Check if we still need to prompt (wallet may have loaded already)
+        if not self._pending_encrypted_storage or not self._pending_wallet_path:
+            return
+        
+        # Check cooldown first - but don't auto-retry, let user dismiss error and try again
+        remaining = self._get_password_cooldown_seconds()
+        if remaining > 0:
+            minutes = remaining // 60
+            seconds = remaining % 60
+            if minutes > 0:
+                time_str = f"{minutes}m {seconds}s"
+            else:
+                time_str = f"{seconds}s"
+            
+            def on_cooldown_dismiss():
+                # Re-prompt after user dismisses cooldown message
+                Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.3)
+            
+            self._error_with_image_and_callback(
+                f"Too many failed attempts.\nPlease wait {time_str} before trying again.",
+                "assets/wrong_password.png",
+                on_cooldown_dismiss
+            )
+            return
+        
         def on_password_entered(password):
             storage = self._pending_encrypted_storage
             wallet_path = self._pending_wallet_path
@@ -2286,7 +2412,9 @@ class FrencoinApp(App):
             try:
                 # Try to decrypt with the provided password
                 storage.decrypt(password)
-                print("[WALLET] Wallet decrypted successfully")
+                
+                # Success! Reset failed attempts
+                self._reset_password_attempts()
                 
                 # Clear pending references
                 self._pending_encrypted_storage = None
@@ -2298,6 +2426,12 @@ class FrencoinApp(App):
             except InvalidPassword:
                 self._record_failed_password()
                 remaining = self._get_password_cooldown_seconds()
+                
+                def reprompt_after_dismiss():
+                    # Only re-prompt if wallet still needs to be loaded
+                    if self._pending_encrypted_storage and self._pending_wallet_path:
+                        Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.1)
+                
                 if remaining > 0:
                     minutes = remaining // 60
                     seconds = remaining % 60
@@ -2305,24 +2439,19 @@ class FrencoinApp(App):
                         time_str = f"{minutes}m {seconds}s"
                     else:
                         time_str = f"{seconds}s"
-                    self._error_with_image(
+                    self._error_with_image_and_callback(
                         f"Wrong password.\nToo many failed attempts. Please wait {time_str}.",
                         "assets/wrong_password.png",
+                        reprompt_after_dismiss
                     )
                 else:
-                    self._error_with_image("Wrong password.", "assets/wrong_password.png")
-                # Re-prompt for password
-                Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.5)
-            except Exception as e:
-                print(f"[WALLET] Error decrypting wallet: {e}")
-                import traceback
-                traceback.print_exc()
-                self._error(f"Error decrypting wallet: {e}")
-        
-        # Check cooldown first
-        if self._check_password_cooldown():
-            Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 1.0)
-            return
+                    self._error_with_image_and_callback(
+                        "Wrong password.", 
+                        "assets/wrong_password.png",
+                        reprompt_after_dismiss
+                    )
+            except Exception:
+                self._error("Error decrypting wallet.")
         
         EnterPasswordPopup(submit_cb=on_password_entered).open()
 
@@ -2331,21 +2460,15 @@ class FrencoinApp(App):
         try:
             # CRITICAL: Pass storage to WalletDB so save_db() works correctly
             db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
-            print("[WALLET] DB loaded")
-            wallet_type = db.get('wallet_type')
-            print(f"[WALLET] Wallet type from DB: {wallet_type}")
             
             self.wallet = Wallet(db, config=self.config)
-            print("[WALLET] Wallet object created")
             # Store reference to storage for saving (belt and suspenders)
             self.wallet.storage = storage
             self.wallet.start_network(self.network)
-            print("[WALLET] Wallet started on network")
 
             # Restore quiz state
             self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
             self.main_screen.quiz_completed = self.seed_quiz_done
-            print(f"[WALLET] Quiz state restored: {self.seed_quiz_done}")
 
             # Restore saved display address from wallet DB
             saved_addr = self.wallet.db.get("current_display_address", None)
@@ -2374,23 +2497,18 @@ class FrencoinApp(App):
                     # Wallet might be encrypted or restored from xpub
                     pass
             
-            print("[WALLET] Wallet loaded successfully!")
             self.refresh_wallet()
             
-        except WalletFileException as e:
-            print(f"[WALLET] WalletFileException in _load_wallet_from_storage: {e}")
+        except WalletFileException:
             raise
-        except Exception as e:
-            print(f"[WALLET] Error in _load_wallet_from_storage: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
             raise
 
     def _create_new_wallet(self):
         wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
+        set_secure_dir_permissions(wallet_dir)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
-        print(f"[WALLET] Creating new wallet at: {wallet_path}")
         assert self.config is not None
         result = create_new_wallet(
             path=wallet_path,
@@ -2406,33 +2524,24 @@ class FrencoinApp(App):
         # Just copy the reference to wallet.storage for convenience
         if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
             self.wallet.storage = self.wallet.db.storage
-            print(f"[WALLET] Using existing db.storage reference")
         else:
             # Fallback: only create new storage if db doesn't have one (shouldn't happen)
-            print(f"[WALLET] WARNING: db.storage is None, creating new storage")
             storage = WalletStorage(wallet_path)
             self.wallet.db.storage = storage
             self.wallet.storage = storage
             
         # Verify wallet_type was set correctly
         wallet_type = self.wallet.db.get('wallet_type')
-        print(f"[WALLET] Wallet type after creation: {wallet_type}")
         if wallet_type is None:
-            print("[WALLET] WARNING: wallet_type is None! Setting to 'standard'")
             self.wallet.db.put('wallet_type', 'standard')
 
         # Force save to ensure data is on disk
         self.wallet.db.set_modified(True)
         try:
             self.wallet.save_db()
-            # Verify file was actually created
-            if os.path.exists(wallet_path):
-                file_size = os.path.getsize(wallet_path)
-                print(f"[WALLET] Wallet saved successfully, file size: {file_size} bytes")
-            else:
-                print(f"[WALLET] WARNING: Wallet file not found after save_db()!")
-        except Exception as e:
-            print(f"[WALLET] Error saving wallet after creation: {e}")
+            set_secure_file_permissions(wallet_path)
+        except Exception:
+            pass
 
         self.wallet.start_network(self.network)
 
@@ -2450,8 +2559,8 @@ class FrencoinApp(App):
         # Restore wallet from a 12-word seed and skip the quiz
         wallet_dir = self._get_wallet_dir()
         os.makedirs(wallet_dir, exist_ok=True)
+        set_secure_dir_permissions(wallet_dir)
         wallet_path = os.path.join(wallet_dir, "default_wallet")
-        print(f"[WALLET] Restoring wallet at: {wallet_path}")
         from electrum.wallet import restore_wallet_from_text
 
         assert self.config is not None
@@ -2470,56 +2579,24 @@ class FrencoinApp(App):
         # Just copy the reference to wallet.storage for convenience
         if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
             self.wallet.storage = self.wallet.db.storage
-            print(f"[WALLET] Using existing db.storage reference")
         else:
             # Fallback: only create new storage if db doesn't have one (shouldn't happen)
-            print(f"[WALLET] WARNING: db.storage is None, creating new storage")
             storage = WalletStorage(wallet_path)
             self.wallet.db.storage = storage
             self.wallet.storage = storage
 
         # Verify wallet_type was set correctly
         wallet_type = self.wallet.db.get('wallet_type')
-        print(f"[WALLET] Wallet type after restore (before save): {wallet_type}")
         if wallet_type is None:
-            print("[WALLET] WARNING: wallet_type is None! Setting to 'standard'")
             self.wallet.db.put('wallet_type', 'standard')
 
         # Force save to ensure data is on disk
         self.wallet.db.set_modified(True)
         try:
             self.wallet.save_db()
-            # Verify file was actually created
-            if os.path.exists(wallet_path):
-                file_size = os.path.getsize(wallet_path)
-                print(f"[WALLET] Wallet saved successfully, file size: {file_size} bytes")
-                # Log wallet type to debug the issue
-                try:
-                    wallet_type = self.wallet.db.get('wallet_type')
-                    print(f"[WALLET] Wallet type after restore: {wallet_type}")
-                except Exception:
-                    pass
-                
-                # DEBUG: Verify wallet_type is actually in the saved file
-                try:
-                    with open(wallet_path, 'r', encoding='utf-8') as f:
-                        saved_content = f.read()
-                    if 'wallet_type' in saved_content:
-                        import re
-                        match = re.search(r'"wallet_type"\s*:\s*"([^"]*)"', saved_content)
-                        if match:
-                            print(f"[WALLET] VERIFIED in file: wallet_type = {match.group(1)}")
-                        else:
-                            print("[WALLET] wallet_type in file but couldn't parse")
-                    else:
-                        print("[WALLET] CRITICAL: wallet_type NOT in saved file!")
-                        print(f"[WALLET] DB data keys: {list(self.wallet.db.data.keys())[:10]}")
-                except Exception as e:
-                    print(f"[WALLET] Error verifying saved file: {e}")
-            else:
-                print(f"[WALLET] WARNING: Wallet file not found after save_db()!")
-        except Exception as e:
-            print(f"[WALLET] Error saving wallet after restore: {e}")
+            set_secure_file_permissions(wallet_path)
+        except Exception:
+            pass
 
         self.wallet.start_network(self.network)
 
@@ -2545,7 +2622,6 @@ class FrencoinApp(App):
         We don't rely on the exact args because this fork's trigger_callback
         isn't passing an 'event' param.
         """
-        print(f"[KIVY] _on_network_event args={args!r}, kwargs={kwargs!r}")
         Clock.schedule_once(lambda dt: self._update_network_status(), 0)
 
     def _update_network_status(self):
@@ -2555,9 +2631,7 @@ class FrencoinApp(App):
 
         try:
             status_obj = self.network.get_status()
-            print("[KIVY] network.get_status() ->", repr(status_obj))
-        except Exception as e:
-            print("[KIVY] error calling network.get_status():", repr(e))
+        except Exception:
             self.main_screen.status = "Network status error"
             return
 
@@ -2627,9 +2701,8 @@ class FrencoinApp(App):
         if self.wallet:
             try:
                 self.wallet.save_db()
-                print("[WALLET] Saved wallet on pause")
-            except Exception as e:
-                print(f"[WALLET] Error saving wallet on pause: {e}")
+            except Exception:
+                pass
         return True
 
     def on_resume(self):
@@ -2641,8 +2714,8 @@ class FrencoinApp(App):
             from kivy.core.window import Window
 
             Window.canvas.ask_update()
-        except Exception as e:
-            print(f"[UI] Canvas refresh error on resume: {e}")
+        except Exception:
+            pass
 
         # Refresh wallet state when app resumes
         # Use a background thread to avoid ANR when wallet operations are slow
@@ -2662,9 +2735,8 @@ class FrencoinApp(App):
         if self.wallet:
             try:
                 self.wallet.save_db()
-                print("[WALLET] Saved wallet on stop")
-            except Exception as e:
-                print(f"[WALLET] Error saving wallet on stop: {e}")
+            except Exception:
+                pass
         try:
             from kivy.core.window import Window as _W
 
@@ -2786,12 +2858,9 @@ class FrencoinApp(App):
             import ssl
 
             url = f"https://explorer.frencoin.org/api/getrawtransaction?txid={txid}&decrypt=1"
-            print(f"[FREN DEBUG] Fetching timestamp for txid: {txid[:16]}...")
 
             cafile = certifi.where()
             ctx = ssl.create_default_context(cafile=cafile)
-            # ctx.check_hostname = False
-            # ctx.verify_mode = ssl.CERT_NONE
 
             req = urllib.request.Request(
                 url, headers={"User-Agent": "Frencoin-Wallet/1.0"}
@@ -2799,12 +2868,11 @@ class FrencoinApp(App):
             with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                 data = json.loads(response.read().decode())
                 timestamp = data.get("time")
-                print(f"[FREN DEBUG] Got timestamp for {txid[:16]}: {timestamp}")
                 if timestamp and isinstance(timestamp, int):
                     FrencoinApp._tx_timestamp_cache[txid] = timestamp
                     return timestamp
-        except Exception as e:
-            print(f"[FREN DEBUG] Failed to fetch timestamp for {txid[:16]}: {e}")
+        except Exception:
+            pass
         return None
 
     def _finish_send_with_password(self, password: Optional[str]):
@@ -2864,12 +2932,9 @@ class FrencoinApp(App):
             main_screen.status = "Building transaction..."
 
         def _do_build_and_broadcast():
-            print("[TX] Background thread started")
             try:
-                print("[TX] Getting spendable coins...")
                 value = int(amount * COIN)
                 coins = wallet.get_spendable_coins(None)
-                print(f"[TX] Got {len(coins)} coins")
 
                 def fee_estimator(size):
                     try:
@@ -2880,12 +2945,10 @@ class FrencoinApp(App):
                         return int(size) * sat_per_vb
 
                 # First pass: estimate fee (add-on-top)
-                print("[TX] Creating unsigned transaction...")
                 output1 = PartialTxOutput.from_address_and_value(dest_addr, value)
                 tx = wallet.make_unsigned_transaction(
                     coins=coins, outputs=[output1], fee=fee_estimator
                 )
-                print("[TX] Unsigned transaction created")
 
                 if subtract_fee:
                     try:
@@ -2905,14 +2968,12 @@ class FrencoinApp(App):
                         main_screen.status = "Signing transaction..."
 
                 Clock.schedule_once(_update_status_signing, 0)
-                print("[TX] Signing transaction...")
                 try:
                     wallet.sign_transaction(tx, password=password)
                 finally:
                     # Clear password from memory after use
                     if password:
                         secure_clear_string(password)
-                print("[TX] Transaction signed")
 
                 def _update_status_broadcast(dt):
                     if main_screen:
@@ -2926,13 +2987,11 @@ class FrencoinApp(App):
                     Clock.schedule_once(lambda dt: self._error("Network not ready."), 0)
                     return
 
-                print("[TX] Broadcasting transaction...")
                 fut = asyncio.run_coroutine_threadsafe(
                     network.broadcast_transaction(tx), _ELECTRUM_LOOP
                 )
                 fut.result(timeout=30)  # Add timeout to prevent infinite hang
                 txid = tx.txid()
-                print(f"[TX] Transaction broadcasted: {txid}")
 
                 def _on_success(dt):
                     # Reset password attempts on successful send
@@ -2951,14 +3010,9 @@ class FrencoinApp(App):
                 Clock.schedule_once(_on_success, 0)
 
             except NotEnoughFunds:
-                print("[TX] Error: Not enough funds")
                 Clock.schedule_once(lambda dt: self._error("Not enough funds."), 0)
             except Exception as e:
                 err_msg = str(e)
-                print(f"[TX] Error: {err_msg}")
-                import traceback
-
-                traceback.print_exc()
                 err_str = err_msg.lower()
                 if (
                     "password" in err_str
@@ -2994,10 +3048,8 @@ class FrencoinApp(App):
                 Clock.schedule_once(lambda dt: self.refresh_wallet(), 0)
 
         # Run in background thread to avoid blocking UI
-        print("[TX] Starting background thread...")
         thread = threading.Thread(target=_do_build_and_broadcast, daemon=True)
         thread.start()
-        print("[TX] Background thread started, returning to UI")
 
     def _get_password_cooldown_seconds(self) -> int:
         """Get remaining cooldown seconds, or 0 if no cooldown active."""
@@ -3032,11 +3084,13 @@ class FrencoinApp(App):
         cooldown = self._get_cooldown_duration()
         if cooldown > 0:
             self._password_cooldown_until = time.time() + cooldown
+        self._save_security_state()
 
     def _reset_password_attempts(self):
         """Reset failed attempts on successful password entry."""
         self._failed_password_attempts = 0
         self._password_cooldown_until = 0
+        self._save_security_state()
 
     def _check_password_cooldown(self) -> bool:
         """Check if in cooldown. If so, show error and return True."""
@@ -3291,7 +3345,7 @@ class FrencoinApp(App):
             copy_btn = Button(text="Copy")
 
             def do_copy(_inst):
-                Clipboard.copy(copyable_text)
+                clipboard_copy_with_timeout(copyable_text, timeout_seconds=60)
                 _inst.text = "Copied!"
                 Clock.schedule_once(lambda dt: setattr(_inst, "text", "Copy"), 1.5)
 
@@ -3351,6 +3405,63 @@ class FrencoinApp(App):
         )
         close_btn = Button(text="Close")
         close_btn.bind(on_release=popup.dismiss)
+        btn_box.add_widget(close_btn)
+        container.add_widget(btn_box)
+
+        popup.open()
+
+    def _error_with_image_and_callback(self, msg, image_path, on_dismiss_callback):
+        """Show an error popup with image that calls a callback when dismissed."""
+        # Main container
+        container = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(15))
+
+        # Image centered at top
+        img = Image(
+            source=image_path,
+            size_hint=(None, None),
+            size=(dp(180), dp(180)),
+            pos_hint={"center_x": 0.5},
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        container.add_widget(img)
+
+        # Create a label that wraps text properly
+        label = Label(
+            text=msg,
+            halign="center",
+            valign="top",
+            text_size=(None, None),
+            size_hint_y=None,
+        )
+        label.bind(
+            width=lambda inst, val: setattr(inst, "text_size", (val - dp(20), None))
+        )
+        label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1]))
+        container.add_widget(label)
+
+        # Spacer
+        container.add_widget(Widget(size_hint_y=1))
+
+        # Close button
+        btn_box = BoxLayout(size_hint_y=None, height=dp(44))
+        popup = Popup(
+            title="",
+            separator_height=0,
+            content=container,
+            size_hint=(0.9, 0.45),
+        )
+        
+        def on_close(_inst):
+            popup.dismiss()
+            if on_dismiss_callback:
+                try:
+                    on_dismiss_callback()
+                except Exception:
+                    pass
+        
+        close_btn = Button(text="Close")
+        close_btn.bind(on_release=on_close)
         btn_box.add_widget(close_btn)
         container.add_widget(btn_box)
 
@@ -3453,7 +3564,7 @@ class FrencoinApp(App):
             copy_btn = Button(text="Copy TXID")
 
             def do_copy(_inst):
-                Clipboard.copy(copyable_text)
+                clipboard_copy_with_timeout(copyable_text, timeout_seconds=60)
                 _inst.text = "Copied!"
                 Clock.schedule_once(lambda dt: setattr(_inst, "text", "Copy TXID"), 1.5)
 
@@ -3538,9 +3649,6 @@ class FrencoinApp(App):
                 history = self.wallet.get_full_history()
                 if isinstance(history, dict):
                     items = list(history.values())
-                    print(
-                        f"[FREN DEBUG] _bg_fetch: got {len(items)} transactions from history"
-                    )
 
                     for item in items[-10:][::-1]:
                         value_obj = item.get("balance_delta") or item.get("value", 0)
@@ -3690,9 +3798,6 @@ class FrencoinApp(App):
         if isinstance(history, dict):
             # Electrum typically returns an OrderedDict; newest entries at the end
             items = list(history.values())
-            print(
-                f"[FREN DEBUG] refresh_wallet: got {len(items)} transactions from history"
-            )
             for item in items[-10:][::-1]:  # up to 10 most recent, newest first
                 try:
                     value = item.get("value", 0)
@@ -3793,7 +3898,7 @@ class FrencoinApp(App):
             self._error("No address to copy yet.")
             return
         try:
-            Clipboard.copy(addr)
+            clipboard_copy_with_timeout(addr, timeout_seconds=60)
         except Exception as e:
             self._error(f"Could not copy address: {e}")
             return

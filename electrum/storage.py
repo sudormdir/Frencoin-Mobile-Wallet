@@ -47,8 +47,14 @@ def get_derivation_used_for_hw_device_encryption():
 
 class StorageEncryptionVersion(IntEnum):
     PLAINTEXT = 0
-    USER_PASSWORD = 1
-    XPUB_PASSWORD = 2
+    USER_PASSWORD = 1      # BIE1: Legacy weak PBKDF2 (1024 iterations, no salt)
+    XPUB_PASSWORD = 2      # BIE2: Hardware wallet encryption
+    USER_PASSWORD_V2 = 3   # BIE3: Strong PBKDF2 (150000 iterations, random salt)
+
+
+# Strong PBKDF2 parameters for new encryption (BIE3)
+PBKDF2_ITERATIONS_V2 = 150000  # Balance between security and mobile performance
+PBKDF2_SALT_LENGTH = 32        # 256-bit salt
 
 
 class StorageReadWriteError(Exception): pass
@@ -64,6 +70,7 @@ class WalletStorage(Logger):
         self.logger.info(f"wallet path {self.path}")
         self.pubkey = None
         self.decrypted = ''
+        self._current_salt = None  # Salt for BIE3 encryption
         try:
             test_read_write_permissions(self.path)
         except IOError as e:
@@ -140,18 +147,36 @@ class WalletStorage(Logger):
                 return StorageEncryptionVersion.USER_PASSWORD
             elif magic == b'BIE2':
                 return StorageEncryptionVersion.XPUB_PASSWORD
+            elif magic == b'BIE3':
+                return StorageEncryptionVersion.USER_PASSWORD_V2
             else:
                 return StorageEncryptionVersion.PLAINTEXT
         except Exception:
             return StorageEncryptionVersion.PLAINTEXT
 
     @staticmethod
-    def get_eckey_from_password(password):
+    def get_eckey_from_password(password, salt: bytes = b'', iterations: int = 1024):
+        """Derive EC key from password using PBKDF2.
+        
+        Args:
+            password: User's password
+            salt: Salt for PBKDF2 (empty for legacy BIE1 format)
+            iterations: PBKDF2 iteration count (1024 for legacy, 150000 for BIE3)
+        """
         if password is None:
             password = ""
-        secret = hashlib.pbkdf2_hmac('sha512', password.encode('utf-8'), b'', iterations=1024)
+        secret = hashlib.pbkdf2_hmac('sha512', password.encode('utf-8'), salt, iterations=iterations)
         ec_key = ecc.ECPrivkey.from_arbitrary_size_secret(secret)
         return ec_key
+
+    @staticmethod
+    def get_eckey_from_password_v2(password, salt: bytes):
+        """Derive EC key using strong PBKDF2 parameters (BIE3 format)."""
+        return WalletStorage.get_eckey_from_password(
+            password, 
+            salt=salt, 
+            iterations=PBKDF2_ITERATIONS_V2
+        )
 
     def _get_encryption_magic(self):
         v = self._encryption_version
@@ -159,6 +184,8 @@ class WalletStorage(Logger):
             return b'BIE1'
         elif v == StorageEncryptionVersion.XPUB_PASSWORD:
             return b'BIE2'
+        elif v == StorageEncryptionVersion.USER_PASSWORD_V2:
+            return b'BIE3'
         else:
             raise WalletFileException('no encryption magic for version: %s' % v)
 
@@ -166,13 +193,30 @@ class WalletStorage(Logger):
         """Raises an InvalidPassword exception on invalid password"""
         if self.is_past_initial_decryption():
             return
-        ec_key = self.get_eckey_from_password(password)
+        
         if self.raw:
             enc_magic = self._get_encryption_magic()
-            s = zlib.decompress(ec_key.decrypt_message(self.raw, enc_magic))
+            
+            if self._encryption_version == StorageEncryptionVersion.USER_PASSWORD_V2:
+                # BIE3 format: salt is stored after magic bytes
+                # Format: base64(magic(4) + salt(32) + ephemeral_pubkey(33) + ciphertext + mac(32))
+                decoded = base64.b64decode(self.raw)
+                salt = decoded[4:4 + PBKDF2_SALT_LENGTH]
+                # Reconstruct the encrypted data without salt for decrypt_message
+                encrypted_without_salt = base64.b64encode(decoded[:4] + decoded[4 + PBKDF2_SALT_LENGTH:])
+                ec_key = self.get_eckey_from_password_v2(password, salt)
+                s = zlib.decompress(ec_key.decrypt_message(encrypted_without_salt, enc_magic))
+                self._current_salt = salt  # Store salt for re-encryption
+            else:
+                # Legacy BIE1/BIE2 format
+                ec_key = self.get_eckey_from_password(password)
+                s = zlib.decompress(ec_key.decrypt_message(self.raw, enc_magic))
+            
             s = s.decode('utf8')
         else:
             s = ''
+            ec_key = self.get_eckey_from_password(password)
+        
         self.pubkey = ec_key.get_public_key_hex()
         self.decrypted = s
 
@@ -183,8 +227,23 @@ class WalletStorage(Logger):
             c = zlib.compress(s, level=zlib.Z_BEST_SPEED)
             enc_magic = self._get_encryption_magic()
             public_key = ecc.ECPubkey(bfh(self.pubkey))
-            s = public_key.encrypt_message(c, enc_magic)
-            s = s.decode('utf8')
+            encrypted = public_key.encrypt_message(c, enc_magic)
+            
+            if self._encryption_version == StorageEncryptionVersion.USER_PASSWORD_V2:
+                # BIE3 format: insert salt after magic bytes
+                # Format: base64(magic(4) + salt(32) + ephemeral_pubkey(33) + ciphertext + mac(32))
+                decoded = base64.b64decode(encrypted)
+                salt = getattr(self, '_current_salt', None)
+                if salt is None:
+                    # Should not happen, but generate new salt as fallback
+                    import secrets
+                    salt = secrets.token_bytes(PBKDF2_SALT_LENGTH)
+                    self._current_salt = salt
+                # Insert salt after magic bytes
+                with_salt = decoded[:4] + salt + decoded[4:]
+                s = base64.b64encode(with_salt).decode('utf8')
+            else:
+                s = encrypted.decode('utf8')
         return s
 
     def check_password(self, password: Optional[str]) -> None:
@@ -196,21 +255,50 @@ class WalletStorage(Logger):
         if not self.is_past_initial_decryption():
             self.decrypt(password)  # this sets self.pubkey
         assert self.pubkey is not None
-        if self.pubkey != self.get_eckey_from_password(password).get_public_key_hex():
+        
+        # Derive key using appropriate method based on encryption version
+        if self._encryption_version == StorageEncryptionVersion.USER_PASSWORD_V2:
+            salt = getattr(self, '_current_salt', b'')
+            derived_pubkey = self.get_eckey_from_password_v2(password, salt).get_public_key_hex()
+        else:
+            derived_pubkey = self.get_eckey_from_password(password).get_public_key_hex()
+        
+        if self.pubkey != derived_pubkey:
             raise InvalidPassword()
 
     def set_password(self, password, enc_version=None):
-        """Set a password to be used for encrypting this storage."""
+        """Set a password to be used for encrypting this storage.
+        
+        New passwords always use the strong BIE3 format (USER_PASSWORD_V2).
+        Legacy BIE1 wallets are automatically upgraded on password change.
+        """
+        import secrets
+        
         if not self.is_past_initial_decryption():
             raise Exception("storage needs to be decrypted before changing password")
+        
         if enc_version is None:
-            enc_version = self._encryption_version
+            # Default to strong encryption for new passwords
+            # This upgrades legacy BIE1 wallets to BIE3
+            if self._encryption_version == StorageEncryptionVersion.XPUB_PASSWORD:
+                enc_version = StorageEncryptionVersion.XPUB_PASSWORD  # Keep HW wallet encryption
+            else:
+                enc_version = StorageEncryptionVersion.USER_PASSWORD_V2
+        
         if password and enc_version != StorageEncryptionVersion.PLAINTEXT:
-            ec_key = self.get_eckey_from_password(password)
+            if enc_version == StorageEncryptionVersion.USER_PASSWORD_V2:
+                # Generate fresh random salt for new encryption
+                salt = secrets.token_bytes(PBKDF2_SALT_LENGTH)
+                self._current_salt = salt
+                ec_key = self.get_eckey_from_password_v2(password, salt)
+            else:
+                # Legacy or HW wallet encryption
+                ec_key = self.get_eckey_from_password(password)
             self.pubkey = ec_key.get_public_key_hex()
             self._encryption_version = enc_version
         else:
             self.pubkey = None
+            self._current_salt = None
             self._encryption_version = StorageEncryptionVersion.PLAINTEXT
 
     def basename(self) -> str:

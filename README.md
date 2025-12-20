@@ -7,10 +7,12 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 
 ## Quick Overview
 
-- **Self-custodial** – Seed phrases are generated/restored on-device and never leave your phone.
+- **Self-custodial** – Your keys, your coins. The app stores private keys locally on your device, and no third party has access to your funds.
 - **Electrum-powered** – Lightweight but proven networking layer.
 - **Kivy UI layer** – Cross-platform Python UI toolkit makes layout tweaks straightforward.
 - **Python-for-Android build** – Buildozer drives python-for-android (p4a) to create the APK with bundled Python modules and native libraries.
+
+> **Important:** Set a strong password when prompted. This encrypts your wallet file and protects your funds if your device is lost, stolen, or backed up to cloud services. See the [Security Considerations](#security-considerations) section for details.
 
 ---
 
@@ -37,7 +39,9 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 - Manual refresh button triggers a background sync when you want data right now.
 
 ### Security & privacy
-- Optional in-app password encrypts the wallet file and must be entered before signing, viewing the seed, or changing security settings.
+- In-app password encrypts the wallet file and must be entered before signing, viewing the seed, or changing security settings. **Strongly recommended** to protect against device loss/theft and cloud backups.
+- Brute-force protection locks password entry after repeated failed attempts, with escalating cooldown periods that persist across app restarts.
+- Clipboard is automatically cleared 60 seconds after copying sensitive data (addresses, transaction IDs).
 - Menu flow allows password changes, fee preference tweaks, and seed review (password-gated) at any time.
 - Ships with prebuilt `libsecp256k1.so` for the supported ABIs so signatures are handled by hardened native code.
 
@@ -145,6 +149,42 @@ Sign the resulting `*.apk` or `*.aab` with your own keystore, then run `zipalign
 - `buildozer appclean` resets the entire python-for-android distribution cache.
 - If compilation fails, confirm the Java version is 17+, the virtual environment is active, and system build tools are installed (Xcode Command Line Tools on macOS, `build-essential` on Linux).
 - When switching Python versions, recreate the virtual environment so cached wheels under `.buildozer/` do not mix interpreters.
+
+---
+
+## Security Considerations
+
+### Set a password
+
+When you create or restore a wallet, the app prompts you to set a password. **This is strongly recommended.** The password encrypts your wallet file using strong cryptography, which means:
+
+- If someone gains physical access to your device, they cannot extract your seed phrase without the password.
+- If your device is backed up to Google Drive or other cloud services (enabled by default on most Android devices), the backup will contain an encrypted wallet file that is useless without your password.
+- If you skip setting a password, your wallet file is stored unencrypted. Anyone with access to your device or its backups could steal your funds.
+
+### Android backups and cloud storage
+
+Android may automatically back up app data to Google Drive. This app allows such backups so that your wallet can survive a device reset or migration. However, this means your wallet file could be stored on Google's servers.
+
+- **With a password:** The backed-up wallet file is encrypted. Google (or anyone who compromises your Google account) cannot access your funds without your wallet password.
+- **Without a password:** The backed-up wallet file is unencrypted. Anyone with access to your Google account backups could extract your seed phrase and steal your funds.
+
+If you prefer to disable cloud backups entirely, you can do so in your Android settings under "Backup" or by using ADB to disable backup for this specific app.
+
+### Your seed phrase is everything
+
+Your 12-word seed phrase can restore your wallet on any compatible device. Treat it like cash:
+
+- Write it down on paper and store it securely offline.
+- Never share it with anyone, including "support" staff.
+- Never enter it on a website or send it over the internet.
+- The app will never ask you to "verify" your seed phrase after initial setup (except during the backup quiz immediately after creation).
+
+### Other security features
+
+- **Brute-force protection:** After several wrong password attempts, the app enforces escalating cooldown periods (1 minute, then 3 minutes, then 5+ minutes). This state persists across app restarts.
+- **Clipboard clearing:** When you copy an address or transaction ID, the clipboard is automatically cleared after 60 seconds to prevent other apps from reading sensitive data.
+- **Secure file permissions:** Wallet files are created with restrictive permissions (owner read/write only) to prevent other apps from accessing them.
 
 ---
 

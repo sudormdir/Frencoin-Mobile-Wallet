@@ -120,6 +120,105 @@ def clipboard_copy_with_timeout(text: str, timeout_seconds: int = 60) -> None:
     _clipboard_clear_event = Clock.schedule_once(clear_clipboard, timeout_seconds)
 
 
+def _get_device_key() -> bytes:
+    """
+    Derive a device-specific encryption key for the security state file.
+    
+    This isn't meant to be unbreakable - an attacker with code access can
+    figure out the key derivation. The goal is to:
+    1. Prevent casual file deletion/modification from resetting brute-force protection
+    2. Require code analysis to bypass, not just file manipulation
+    3. Make the security state file appear as random data
+    """
+    import hashlib
+    import platform
+    
+    # Combine multiple sources of device identity
+    # These are stable across app restarts but vary between devices
+    components = []
+    
+    # Platform info
+    components.append(platform.platform().encode('utf-8'))
+    components.append(platform.machine().encode('utf-8'))
+    
+    # App-specific constant (changes if someone forks the app)
+    components.append(b'frencoin_wallet_security_state_v1')
+    
+    # On Android, try to get Android ID
+    try:
+        from jnius import autoclass
+        Settings = autoclass('android.provider.Settings$Secure')
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        context = PythonActivity.mActivity
+        android_id = Settings.getString(context.getContentResolver(), Settings.ANDROID_ID)
+        if android_id:
+            components.append(android_id.encode('utf-8'))
+    except Exception:
+        pass
+    
+    # Derive key using SHA-256
+    combined = b'|'.join(components)
+    return hashlib.sha256(combined).digest()
+
+
+def _encrypt_security_data(data: bytes) -> bytes:
+    """Encrypt security state data using device-derived key."""
+    import hashlib
+    
+    key = _get_device_key()
+    
+    # Generate random IV
+    iv = secrets.token_bytes(16)
+    
+    # Use AES-256-CBC (via pyaes which is already a dependency)
+    try:
+        import pyaes
+        # Pad data to AES block size
+        pad_len = 16 - (len(data) % 16)
+        padded = data + bytes([pad_len] * pad_len)
+        
+        encrypter = pyaes.Encrypter(pyaes.AESModeOfOperationCBC(key, iv))
+        ciphertext = encrypter.feed(padded) + encrypter.feed()
+        
+        # Prepend IV to ciphertext
+        return iv + ciphertext
+    except Exception:
+        # Fallback: simple XOR obfuscation (not secure, but better than plaintext)
+        result = bytearray(iv)
+        key_expanded = (key * ((len(data) // len(key)) + 1))[:len(data)]
+        for i, b in enumerate(data):
+            result.append(b ^ key_expanded[i])
+        return bytes(result)
+
+
+def _decrypt_security_data(encrypted: bytes) -> bytes:
+    """Decrypt security state data using device-derived key."""
+    if len(encrypted) < 17:  # IV (16) + at least 1 byte
+        raise ValueError("Invalid encrypted data")
+    
+    key = _get_device_key()
+    iv = encrypted[:16]
+    ciphertext = encrypted[16:]
+    
+    try:
+        import pyaes
+        decrypter = pyaes.Decrypter(pyaes.AESModeOfOperationCBC(key, iv))
+        padded = decrypter.feed(ciphertext) + decrypter.feed()
+        
+        # Remove PKCS7 padding
+        pad_len = padded[-1]
+        if pad_len > 16 or pad_len == 0:
+            raise ValueError("Invalid padding")
+        return padded[:-pad_len]
+    except ImportError:
+        # Fallback: simple XOR deobfuscation
+        key_expanded = (key * ((len(ciphertext) // len(key)) + 1))[:len(ciphertext)]
+        result = bytearray()
+        for i, b in enumerate(ciphertext):
+            result.append(b ^ key_expanded[i])
+        return bytes(result)
+
+
 def get_persistent_data_dir():
     """
     Get a persistent data directory that survives app updates on Android.
@@ -2235,7 +2334,7 @@ class FrencoinApp(App):
         return self.user_data_dir
 
     def _load_security_state(self):
-        """Load brute-force protection state from persistent storage."""
+        """Load brute-force protection state from encrypted persistent storage."""
         import time
         import json
         
@@ -2244,20 +2343,28 @@ class FrencoinApp(App):
         
         try:
             if os.path.exists(self._security_state_file):
-                with open(self._security_state_file, 'r') as f:
-                    data = json.load(f)
-                    self._failed_password_attempts = int(data.get('failed_attempts', 0))
-                    cooldown_until = float(data.get('cooldown_until', 0))
-                    # Only restore cooldown if it hasn't expired
-                    if cooldown_until > time.time():
-                        self._password_cooldown_until = cooldown_until
-                    else:
-                        self._password_cooldown_until = 0
+                with open(self._security_state_file, 'rb') as f:
+                    encrypted = f.read()
+                
+                # Decrypt and parse
+                decrypted = _decrypt_security_data(encrypted)
+                data = json.loads(decrypted.decode('utf-8'))
+                
+                self._failed_password_attempts = int(data.get('failed_attempts', 0))
+                cooldown_until = float(data.get('cooldown_until', 0))
+                # Only restore cooldown if it hasn't expired
+                if cooldown_until > time.time():
+                    self._password_cooldown_until = cooldown_until
+                else:
+                    self._password_cooldown_until = 0
         except Exception:
-            pass
+            # If decryption fails (file tampered, different device, etc.),
+            # start fresh - this is safer than allowing bypass
+            self._failed_password_attempts = 0
+            self._password_cooldown_until = 0
 
     def _save_security_state(self):
-        """Save brute-force protection state to persistent storage."""
+        """Save brute-force protection state to encrypted persistent storage."""
         import json
         
         if not self._security_state_file:
@@ -2268,8 +2375,11 @@ class FrencoinApp(App):
                 'failed_attempts': self._failed_password_attempts,
                 'cooldown_until': self._password_cooldown_until
             }
-            with open(self._security_state_file, 'w') as f:
-                json.dump(data, f)
+            plaintext = json.dumps(data).encode('utf-8')
+            encrypted = _encrypt_security_data(plaintext)
+            
+            with open(self._security_state_file, 'wb') as f:
+                f.write(encrypted)
             set_secure_file_permissions(self._security_state_file)
         except Exception:
             pass

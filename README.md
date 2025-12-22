@@ -31,7 +31,7 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 - Receive tab shows the current address in a non-editable field, includes a one-tap copy button, and confirms the copy in the status bar to avoid guessing.
 - Send form manages the soft keyboard so the important fields stay visible; long-press actions provide paste and clear shortcuts on the address entry.
 <p align="center">
-<img width="225" height="500" alt="Confirmation screen" src="https://github.com/user-attachments/assets/af5c41b3-1411-4fef-a15d-85cd7e2200d2" />
+<img width="210" height="421" alt="Confirmation screen" src="https://github.com/user-attachments/assets/175730fc-8331-426d-a5c4-eda7010a0eac" />
 </p>
 - A confirmation dialog summarizes destination, amount, and fee tier. Fee control includes presets (Slow / Normal / Fast / Extreme) plus a custom slider for advanced use, along with the “subtract fee from amount” toggle.
 <p align="center">

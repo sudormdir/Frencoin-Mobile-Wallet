@@ -199,14 +199,6 @@ Shipping a vendored Electrum copy guarantees Frencoin network tweaks, default se
 
 Yes. `main.py` wires `SimpleConfig` to `35.208.59.201:50002:s` in oneserver mode. Change the host, port, or SSL flag there to point to your own infrastructure or to fall back to server auto-discovery.
 
-### What is `p4a_310_env/` doing here?
-
-It is a snapshot of a developer’s macOS virtual environment. It cannot be reused on other machines because it contains absolute paths and platform-specific binaries. Treat it as an example of what to ignore: everyone should create their own `.venv/` and keep it local.
-
 ### Do I need a specific operating system?
 
 Linux and macOS are both supported, and Windows users can build inside WSL2. Pick whichever environment has stable USB debugging and Android tooling for you. The important part is running CPython 3.10 with Java 17 and enough disk space for SDK downloads.
-
----
-
-Happy hacking, and thanks for helping bring Frencoin to Android!

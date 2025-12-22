@@ -273,20 +273,65 @@ from kivy.factory import Factory
 from typing import Optional
 
 
-# Electrum / Frencoin imports
-from electrum.simple_config import SimpleConfig
-from electrum.network import Network
-from electrum.wallet import Wallet, WalletDB, WalletStorage, create_new_wallet
-from electrum.transaction import PartialTxOutput
-from electrum.bitcoin import COIN, is_address
-from electrum.util import (
-    NotEnoughFunds,
-    WalletFileException,
-    create_and_start_event_loop,
-)
-from electrum import constants
+# Electrum imports are deferred to avoid blocking the main thread at startup.
+# They will be imported lazily when first needed.
+# These module-level variables will be set by _init_electrum_imports()
+SimpleConfig = None
+Network = None
+Wallet = None
+WalletDB = None
+WalletStorage = None
+create_new_wallet = None
+PartialTxOutput = None
+COIN = None
+is_address = None
+NotEnoughFunds = None
+WalletFileException = None
+create_and_start_event_loop = None
+constants = None
 
-# Network configuration loaded
+_electrum_imports_done = False
+
+def _init_electrum_imports():
+    """Import Electrum modules. Must be called from background thread."""
+    global SimpleConfig, Network, Wallet, WalletDB, WalletStorage, create_new_wallet
+    global PartialTxOutput, COIN, is_address, NotEnoughFunds, WalletFileException
+    global create_and_start_event_loop, constants, _electrum_imports_done
+    global _ELECTRUM_LOOP, _ELECTRUM_STOPPING_FUT, _ELECTRUM_LOOP_THREAD
+    
+    if _electrum_imports_done:
+        return
+    
+    from electrum.simple_config import SimpleConfig as _SimpleConfig
+    from electrum.network import Network as _Network
+    from electrum.wallet import Wallet as _Wallet, WalletDB as _WalletDB, WalletStorage as _WalletStorage, create_new_wallet as _create_new_wallet
+    from electrum.transaction import PartialTxOutput as _PartialTxOutput
+    from electrum.bitcoin import COIN as _COIN, is_address as _is_address
+    from electrum.util import (
+        NotEnoughFunds as _NotEnoughFunds,
+        WalletFileException as _WalletFileException,
+        create_and_start_event_loop as _create_and_start_event_loop,
+    )
+    from electrum import constants as _constants
+    
+    SimpleConfig = _SimpleConfig
+    Network = _Network
+    Wallet = _Wallet
+    WalletDB = _WalletDB
+    WalletStorage = _WalletStorage
+    create_new_wallet = _create_new_wallet
+    PartialTxOutput = _PartialTxOutput
+    COIN = _COIN
+    is_address = _is_address
+    NotEnoughFunds = _NotEnoughFunds
+    WalletFileException = _WalletFileException
+    create_and_start_event_loop = _create_and_start_event_loop
+    constants = _constants
+    
+    # Start Electrum's asyncio loop
+    _ELECTRUM_LOOP, _ELECTRUM_STOPPING_FUT, _ELECTRUM_LOOP_THREAD = create_and_start_event_loop()
+    
+    _electrum_imports_done = True
 
 
 def format_seed_3col(seed: str, words_per_row: int = 3) -> str:
@@ -466,13 +511,52 @@ def format_amount_6chars(value: Decimal) -> str:
 
 
 # -------------------------------------------------------
-# Start Electrum's asyncio loop once, in its own thread
+# Electrum's asyncio loop - will be initialized lazily in background thread
 # -------------------------------------------------------
-_ELECTRUM_LOOP, _ELECTRUM_STOPPING_FUT, _ELECTRUM_LOOP_THREAD = (
-    create_and_start_event_loop()
-)
+_ELECTRUM_LOOP = None
+_ELECTRUM_STOPPING_FUT = None
+_ELECTRUM_LOOP_THREAD = None
 
 KV = """
+<LoadingOverlay>:
+    size_hint: 1, 1
+    canvas.before:
+        Color:
+            rgba: 0.1, 0.1, 0.1, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '20dp'
+        spacing: '20dp'
+        Widget:
+            size_hint_y: 1
+        Image:
+            source: 'assets/icon.png'
+            size_hint: None, None
+            size: '150dp', '150dp'
+            pos_hint: {'center_x': 0.5}
+            allow_stretch: True
+            keep_ratio: True
+        Label:
+            text: 'FRENDROID WALLET'
+            font_size: '28sp'
+            bold: True
+            halign: 'center'
+            size_hint_y: None
+            height: self.texture_size[1]
+        Label:
+            id: loading_status
+            text: root.loading_status
+            font_size: '16sp'
+            halign: 'center'
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: 0.7, 0.7, 0.7, 1
+        Widget:
+            size_hint_y: 1.5
+
 <MainScreen>:
     orientation: 'vertical'
     padding: '10dp'
@@ -1362,6 +1446,15 @@ KV = """
                 text: "Close"
                 on_release: root.save_and_close(fee_slider.value, subtract_cb.active, skip_cb.active)
 """
+
+
+class LoadingOverlay(BoxLayout):
+    """Full-screen loading overlay shown during app initialization."""
+    loading_status = StringProperty("Loading...")
+
+
+# Register LoadingOverlay with Factory
+Factory.register("LoadingOverlay", cls=LoadingOverlay)
 
 
 class MainScreen(BoxLayout):
@@ -2304,8 +2397,21 @@ class FrencoinApp(App):
         # Disable Kivy's built-in virtual keyboard overlay (we use the system keyboard)
         Window.allow_vkeyboard = False
         Builder.load_string(KV)
+        
+        # Create root container that can swap between loading overlay and main screen
+        from kivy.uix.floatlayout import FloatLayout
+        self._root = FloatLayout()
+        
+        # Create main screen (hidden initially)
         self.main_screen = MainScreen()
-        return self.main_screen
+        self.main_screen.opacity = 0
+        self._root.add_widget(self.main_screen)
+        
+        # Create and show loading overlay
+        self._loading_overlay = LoadingOverlay()
+        self._root.add_widget(self._loading_overlay)
+        
+        return self._root
 
     def on_start(self):
         # Do wallet/network setup after the UI is visible
@@ -2384,102 +2490,232 @@ class FrencoinApp(App):
         except Exception:
             pass
 
+    def _update_loading_status(self, text):
+        """Update loading overlay status text (must be called from main thread)."""
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            self._loading_overlay.loading_status = text
+
+    def _hide_loading_show_main(self):
+        """Hide loading overlay and show main screen."""
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            self._loading_overlay.opacity = 0
+        if self.main_screen:
+            self.main_screen.opacity = 1
+
     def _init_wallet(self):
-        self.main_screen.status = "Starting Electrum network…"
-        wallet_dir = self._get_wallet_dir()
-        os.makedirs(wallet_dir, exist_ok=True)
-        set_secure_dir_permissions(wallet_dir)
-        wallet_path = os.path.join(wallet_dir, "default_wallet")
+        """Initialize wallet - runs ALL heavy setup in background to avoid ANR."""
         
-        # Initialize and load brute-force protection state
-        self._security_state_file = os.path.join(wallet_dir, ".security_state")
-        self._load_security_state()
-
-
-
-        # Check if wallet exists in old location and migrate if needed
-        old_wallet_path = os.path.join(self.user_data_dir, "default_wallet")
-        if not os.path.exists(wallet_path) and os.path.exists(old_wallet_path) and wallet_dir != self.user_data_dir:
+        def _bg_init():
+            """Background thread: do ALL heavy initialization work."""
             try:
-                import shutil
+                # First, import Electrum modules (this is the heavy part)
+                try:
+                    Clock.schedule_once(lambda dt: self._update_loading_status("Loading libraries..."), 0)
+                except Exception:
+                    pass
+                
+                _init_electrum_imports()
+                
+                # Update status
+                try:
+                    Clock.schedule_once(lambda dt: self._update_loading_status("Preparing wallet..."), 0)
+                except Exception:
+                    pass
+                
+                wallet_dir = self._get_wallet_dir()
                 os.makedirs(wallet_dir, exist_ok=True)
                 set_secure_dir_permissions(wallet_dir)
-                shutil.copy2(old_wallet_path, wallet_path)
-                set_secure_file_permissions(wallet_path)
+                wallet_path = os.path.join(wallet_dir, "default_wallet")
+                
+                # Initialize and load brute-force protection state
+                self._security_state_file = os.path.join(wallet_dir, ".security_state")
+                self._load_security_state()
+                
+                # Check if wallet exists in old location and migrate if needed
+                old_wallet_path = os.path.join(self.user_data_dir, "default_wallet")
+                if not os.path.exists(wallet_path) and os.path.exists(old_wallet_path) and wallet_dir != self.user_data_dir:
+                    try:
+                        import shutil
+                        os.makedirs(wallet_dir, exist_ok=True)
+                        set_secure_dir_permissions(wallet_dir)
+                        shutil.copy2(old_wallet_path, wallet_path)
+                        set_secure_file_permissions(wallet_path)
+                    except Exception:
+                        pass
+                
+                # Update status
+                try:
+                    Clock.schedule_once(lambda dt: self._update_loading_status("Connecting to network..."), 0)
+                except Exception:
+                    pass
+                
+                # Create config and network IN BACKGROUND
+                self.config = SimpleConfig(
+                    {
+                        "server": "35.208.59.201:50002:s",  # Frencoin ElectrumX server (SSL)
+                        "electrum_path": wallet_dir,
+                        "auto_connect": False,
+                        "oneserver": True,
+                        "timeout": 30,
+                        "rpc": False,
+                    }
+                )
+                
+                self.network = Network(self.config)
+                self.network.start()
+                
+                # Check wallet existence and encryption status
+                wallet_exists = os.path.exists(wallet_path)
+                is_encrypted = False
+                storage = None
+                
+                if wallet_exists:
+                    try:
+                        Clock.schedule_once(lambda dt: self._update_loading_status("Loading wallet..."), 0)
+                    except Exception:
+                        pass
+                    
+                    try:
+                        storage = WalletStorage(wallet_path)
+                        is_encrypted = storage.is_encrypted()
+                    except WalletFileException:
+                        # Corrupt wallet - back it up
+                        try:
+                            backup_path = wallet_path + ".corrupt"
+                            os.replace(wallet_path, backup_path)
+                        except Exception:
+                            pass
+                        wallet_exists = False
+                        storage = None
+                    except Exception:
+                        wallet_exists = False
+                        storage = None
+                
+                if wallet_exists and is_encrypted:
+                    # Need password - switch to main thread for password prompt
+                    self._pending_encrypted_storage = storage
+                    self._pending_wallet_path = wallet_path
+                    try:
+                        Clock.schedule_once(lambda dt: self._show_password_prompt_and_main(), 0)
+                    except Exception:
+                        pass
+                    return
+                
+                if wallet_exists and storage:
+                    # Load unencrypted wallet in background
+                    try:
+                        Clock.schedule_once(lambda dt: self._update_loading_status("Loading wallet data..."), 0)
+                    except Exception:
+                        pass
+                    
+                    try:
+                        db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
+                        wallet = Wallet(db, config=self.config)
+                        wallet.storage = storage
+                        
+                        # Start network for wallet
+                        wallet.start_network(self.network)
+                        
+                        # Store wallet and finish on main thread
+                        self._loaded_wallet = wallet
+                        self._loaded_wallet_path = wallet_path
+                        try:
+                            Clock.schedule_once(lambda dt: self._finish_wallet_load(), 0)
+                        except Exception:
+                            pass
+                        return
+                    except Exception:
+                        wallet_exists = False
+                
+                # No wallet exists or failed to load - show restore popup
+                try:
+                    Clock.schedule_once(lambda dt: self._show_restore_popup_and_main(), 0)
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                try:
+                    error_msg = str(e)
+                    Clock.schedule_once(lambda dt: self._init_wallet_error(error_msg), 0)
+                except Exception:
+                    pass
+        
+        # Run ALL heavy init in background
+        threading.Thread(target=_bg_init, daemon=True).start()
+
+    def _init_wallet_error(self, error_msg):
+        """Handle initialization error."""
+        self._hide_loading_show_main()
+        if self.main_screen:
+            self.main_screen.status = "Initialization error"
+        self._error(f"Failed to initialize wallet: {error_msg}")
+
+    def _show_password_prompt_and_main(self):
+        """Show main screen and password prompt for encrypted wallet."""
+        self._hide_loading_show_main()
+        self._update_network_status()
+        self._prompt_for_wallet_password()
+
+    def _show_restore_popup_and_main(self):
+        """Show main screen and restore/create wallet popup."""
+        self._hide_loading_show_main()
+        self._update_network_status()
+        self.seed_quiz_done = False
+        if self.config:
+            try:
+                self.config.set_key("seed_quiz_done", False)
+            except Exception:
+                pass
+        if self.main_screen:
+            self.main_screen.quiz_completed = False
+        RestoreWalletPopup().open()
+
+    def _finish_wallet_load(self):
+        """Finish wallet loading on main thread after background load."""
+        self._hide_loading_show_main()
+        
+        wallet = getattr(self, '_loaded_wallet', None)
+        if not wallet:
+            self._show_restore_popup_and_main()
+            return
+        
+        self.wallet = wallet
+        self._loaded_wallet = None
+        
+        # Restore quiz state
+        self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
+        if self.main_screen:
+            self.main_screen.quiz_completed = self.seed_quiz_done
+
+        # Restore saved display address from wallet DB
+        saved_addr = self.wallet.db.get("current_display_address", None)
+        if saved_addr:
+            try:
+                if saved_addr in self.wallet.get_receiving_addresses():
+                    self._current_display_address = saved_addr
+                    # Ensure current address is in displayed_addresses list
+                    displayed = self.wallet.db.get("displayed_addresses", [])
+                    if saved_addr not in displayed:
+                        displayed.append(saved_addr)
+                        self.wallet.db.put("displayed_addresses", displayed)
+                        self.wallet.save_db()
             except Exception:
                 pass
 
-        # Direct ElectrumX IP + SSL port
-        self.config = SimpleConfig(
-            {
-                "server": "35.208.59.201:50002:s",  # Frencoin ElectrumX server (SSL)
-                "electrum_path": wallet_dir,
-                "auto_connect": False,
-                "oneserver": True,
-                "timeout": 30,
-                "rpc": False,
-            }
-        )
-
-        self.network = Network(self.config)
-        self.network.start()
-
-        self.main_screen.status = "Resolving & connecting…"
-
-        # Initial status probe
+        # Update network status
         self._update_network_status()
 
-        if os.path.exists(wallet_path):
+        # If seed quiz wasn't completed, resume it
+        if not self.seed_quiz_done:
             try:
-                storage = WalletStorage(wallet_path)
-                
-                # Check if wallet is encrypted - if so, we need password before loading
-                if storage.is_encrypted():
-                    # Store storage reference and prompt for password
-                    self._pending_encrypted_storage = storage
-                    self._pending_wallet_path = wallet_path
-                    # Schedule password prompt on next frame
-                    Clock.schedule_once(lambda dt: self._prompt_for_wallet_password(), 0.1)
-                    return
-                
-                # Unencrypted wallet - load directly
-                self._load_wallet_from_storage(storage, wallet_path)
-            except WalletFileException as e:
-                # Corrupt/unknown wallet type — back it up and force restore flow
-                try:
-                    backup_path = wallet_path + ".corrupt"
-                    os.replace(wallet_path, backup_path)
-                except Exception:
-                    pass
-                self.wallet = None
-                self.seed_quiz_done = False
-                self.main_screen.quiz_completed = False
-                self._error(
-                    f"Wallet file error. Please restore or create a new wallet."
-                )
-                RestoreWalletPopup().open()
-                return
-            except Exception as e:
-                # Catch ANY other exception to prevent silent failures
-                self.wallet = None
-                self.seed_quiz_done = False
-                self.main_screen.quiz_completed = False
-                self._error(
-                    f"Error loading wallet. Please restore or create a new wallet."
-                )
-                RestoreWalletPopup().open()
-                return
-        else:
-            # First run: prompt to restore or create
-            self.seed_quiz_done = False
-            if self.config:
-                try:
-                    self.config.set_key("seed_quiz_done", False)
-                except Exception:
-                    pass
-            self.main_screen.quiz_completed = False
-            RestoreWalletPopup().open()
-
+                seed = self.wallet.get_seed(None)
+                if seed:
+                    Clock.schedule_once(
+                        lambda dt: self.open_seed_backup_flow(seed), 0.3
+                    )
+            except Exception:
+                pass
+        
         self.refresh_wallet()
 
     def _prompt_for_wallet_password(self):
@@ -2566,162 +2802,238 @@ class FrencoinApp(App):
         EnterPasswordPopup(submit_cb=on_password_entered).open()
 
     def _load_wallet_from_storage(self, storage, wallet_path):
-        """Load wallet from storage object (must be decrypted if encrypted)."""
-        try:
-            # CRITICAL: Pass storage to WalletDB so save_db() works correctly
-            db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
-            
-            self.wallet = Wallet(db, config=self.config)
-            # Store reference to storage for saving (belt and suspenders)
-            self.wallet.storage = storage
-            self.wallet.start_network(self.network)
-
-            # Restore quiz state
-            self.seed_quiz_done = bool(self.config.get("seed_quiz_done", False))
-            self.main_screen.quiz_completed = self.seed_quiz_done
-
-            # Restore saved display address from wallet DB
-            saved_addr = self.wallet.db.get("current_display_address", None)
-            if saved_addr and saved_addr in self.wallet.get_receiving_addresses():
-                self._current_display_address = saved_addr
-                # Ensure current address is in displayed_addresses list
+        """Load wallet from storage object in background thread (must be decrypted if encrypted)."""
+        # Show loading overlay while loading wallet
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            self._loading_overlay.opacity = 1
+            self._loading_overlay.loading_status = "Loading wallet..."
+        if self.main_screen:
+            self.main_screen.opacity = 0
+        
+        def _bg_load():
+            try:
+                # CRITICAL: Pass storage to WalletDB so save_db() works correctly
+                db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
+                
+                wallet = Wallet(db, config=self.config)
+                # Store reference to storage for saving (belt and suspenders)
+                wallet.storage = storage
+                wallet.start_network(self.network)
+                
+                # Store and finish on main thread
+                self._loaded_wallet = wallet
                 try:
-                    displayed = self.wallet.db.get("displayed_addresses", [])
-                    if saved_addr not in displayed:
-                        displayed.append(saved_addr)
-                        self.wallet.db.put("displayed_addresses", displayed)
-                        self.wallet.save_db()
+                    Clock.schedule_once(lambda dt: self._finish_wallet_load(), 0)
                 except Exception:
                     pass
-
-            # If seed quiz wasn't completed, resume it
-            if not self.seed_quiz_done:
+                    
+            except Exception as e:
+                error_msg = str(e)
                 try:
-                    seed = self.wallet.get_seed(None)
-                    if seed:
-                        # Schedule seed view popup after UI is ready
-                        Clock.schedule_once(
-                            lambda dt: self.open_seed_backup_flow(seed), 0.5
-                        )
+                    Clock.schedule_once(lambda dt: self._wallet_load_error(error_msg), 0)
                 except Exception:
-                    # Wallet might be encrypted or restored from xpub
                     pass
-            
-            self.refresh_wallet()
-            
-        except WalletFileException:
-            raise
-        except Exception:
-            raise
+        
+        threading.Thread(target=_bg_load, daemon=True).start()
+
+    def _wallet_load_error(self, error_msg):
+        """Handle wallet loading error."""
+        self._hide_loading_show_main()
+        self._error(f"Error loading wallet: {error_msg}")
 
     def _create_new_wallet(self):
-        wallet_dir = self._get_wallet_dir()
-        os.makedirs(wallet_dir, exist_ok=True)
-        set_secure_dir_permissions(wallet_dir)
-        wallet_path = os.path.join(wallet_dir, "default_wallet")
-        assert self.config is not None
-        result = create_new_wallet(
-            path=wallet_path,
-            config=self.config,
-            seed_type="standard",
-            gap_limit=None,
-            encrypt_file=False,
-        )
-        self.wallet = result["wallet"]
-        seed = result["seed"]
+        """Create new wallet in background thread."""
+        # Show loading overlay
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            self._loading_overlay.opacity = 1
+            self._loading_overlay.loading_status = "Creating new wallet..."
+        if self.main_screen:
+            self.main_screen.opacity = 0
+        
+        def _bg_create():
+            try:
+                wallet_dir = self._get_wallet_dir()
+                os.makedirs(wallet_dir, exist_ok=True)
+                set_secure_dir_permissions(wallet_dir)
+                wallet_path = os.path.join(wallet_dir, "default_wallet")
+                
+                result = create_new_wallet(
+                    path=wallet_path,
+                    config=self.config,
+                    seed_type="standard",
+                    gap_limit=None,
+                    encrypt_file=False,
+                )
+                wallet = result["wallet"]
+                seed = result["seed"]
 
-        # create_new_wallet already sets up storage properly on db
-        # Just copy the reference to wallet.storage for convenience
-        if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
-            self.wallet.storage = self.wallet.db.storage
-        else:
-            # Fallback: only create new storage if db doesn't have one (shouldn't happen)
-            storage = WalletStorage(wallet_path)
-            self.wallet.db.storage = storage
-            self.wallet.storage = storage
-            
-        # Verify wallet_type was set correctly
-        wallet_type = self.wallet.db.get('wallet_type')
-        if wallet_type is None:
-            self.wallet.db.put('wallet_type', 'standard')
+                # create_new_wallet already sets up storage properly on db
+                if hasattr(wallet.db, 'storage') and wallet.db.storage is not None:
+                    wallet.storage = wallet.db.storage
+                else:
+                    storage = WalletStorage(wallet_path)
+                    wallet.db.storage = storage
+                    wallet.storage = storage
+                    
+                # Verify wallet_type was set correctly
+                wallet_type = wallet.db.get('wallet_type')
+                if wallet_type is None:
+                    wallet.db.put('wallet_type', 'standard')
 
-        # Force save to ensure data is on disk
-        self.wallet.db.set_modified(True)
-        try:
-            self.wallet.save_db()
-            set_secure_file_permissions(wallet_path)
-        except Exception:
-            pass
+                # Force save to ensure data is on disk
+                wallet.db.set_modified(True)
+                try:
+                    wallet.save_db()
+                    set_secure_file_permissions(wallet_path)
+                except Exception:
+                    pass
 
-        self.wallet.start_network(self.network)
+                wallet.start_network(self.network)
+                
+                # Store and finish on main thread
+                self._created_wallet = wallet
+                self._created_seed = seed
+                try:
+                    Clock.schedule_once(lambda dt: self._finish_create_wallet(), 0)
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                error_msg = str(e)
+                try:
+                    Clock.schedule_once(lambda dt: self._create_wallet_error(error_msg), 0)
+                except Exception:
+                    pass
+        
+        threading.Thread(target=_bg_create, daemon=True).start()
 
+    def _finish_create_wallet(self):
+        """Finish wallet creation on main thread."""
+        self._hide_loading_show_main()
+        
+        wallet = getattr(self, '_created_wallet', None)
+        seed = getattr(self, '_created_seed', None)
+        self._created_wallet = None
+        self._created_seed = None
+        
+        if not wallet or not seed:
+            self._error("Failed to create wallet")
+            return
+        
+        self.wallet = wallet
         self.seed_quiz_done = False
         if self.config:
             try:
                 self.config.set_key("seed_quiz_done", False)
             except Exception:
                 pass
-        self.main_screen.quiz_completed = False
+        if self.main_screen:
+            self.main_screen.quiz_completed = False
         self.open_seed_backup_flow(seed)
         self.refresh_wallet()
 
+    def _create_wallet_error(self, error_msg):
+        """Handle wallet creation error."""
+        self._hide_loading_show_main()
+        self._error(f"Failed to create wallet: {error_msg}")
+
     def _restore_wallet_from_seed(self, seed_text: str):
-        # Restore wallet from a 12-word seed and skip the quiz
-        wallet_dir = self._get_wallet_dir()
-        os.makedirs(wallet_dir, exist_ok=True)
-        set_secure_dir_permissions(wallet_dir)
-        wallet_path = os.path.join(wallet_dir, "default_wallet")
-        from electrum.wallet import restore_wallet_from_text
-
-        assert self.config is not None
-        d = restore_wallet_from_text(
-            seed_text,
-            path=wallet_path,
-            config=self.config,
-            passphrase=None,
-            password=None,
-            encrypt_file=False,
-            gap_limit=None,
-        )
-        self.wallet = d["wallet"]
+        """Restore wallet from seed in background thread."""
+        # Show loading overlay
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            self._loading_overlay.opacity = 1
+            self._loading_overlay.loading_status = "Restoring wallet..."
+        if self.main_screen:
+            self.main_screen.opacity = 0
         
-        # restore_wallet_from_text already sets up storage properly on db
-        # Just copy the reference to wallet.storage for convenience
-        if hasattr(self.wallet.db, 'storage') and self.wallet.db.storage is not None:
-            self.wallet.storage = self.wallet.db.storage
-        else:
-            # Fallback: only create new storage if db doesn't have one (shouldn't happen)
-            storage = WalletStorage(wallet_path)
-            self.wallet.db.storage = storage
-            self.wallet.storage = storage
+        def _bg_restore():
+            try:
+                wallet_dir = self._get_wallet_dir()
+                os.makedirs(wallet_dir, exist_ok=True)
+                set_secure_dir_permissions(wallet_dir)
+                wallet_path = os.path.join(wallet_dir, "default_wallet")
+                from electrum.wallet import restore_wallet_from_text
 
-        # Verify wallet_type was set correctly
-        wallet_type = self.wallet.db.get('wallet_type')
-        if wallet_type is None:
-            self.wallet.db.put('wallet_type', 'standard')
+                d = restore_wallet_from_text(
+                    seed_text,
+                    path=wallet_path,
+                    config=self.config,
+                    passphrase=None,
+                    password=None,
+                    encrypt_file=False,
+                    gap_limit=None,
+                )
+                wallet = d["wallet"]
+                
+                # restore_wallet_from_text already sets up storage properly on db
+                if hasattr(wallet.db, 'storage') and wallet.db.storage is not None:
+                    wallet.storage = wallet.db.storage
+                else:
+                    storage = WalletStorage(wallet_path)
+                    wallet.db.storage = storage
+                    wallet.storage = storage
 
-        # Force save to ensure data is on disk
-        self.wallet.db.set_modified(True)
-        try:
-            self.wallet.save_db()
-            set_secure_file_permissions(wallet_path)
-        except Exception:
-            pass
+                # Verify wallet_type was set correctly
+                wallet_type = wallet.db.get('wallet_type')
+                if wallet_type is None:
+                    wallet.db.put('wallet_type', 'standard')
 
-        self.wallet.start_network(self.network)
+                # Force save to ensure data is on disk
+                wallet.db.set_modified(True)
+                try:
+                    wallet.save_db()
+                    set_secure_file_permissions(wallet_path)
+                except Exception:
+                    pass
 
+                wallet.start_network(self.network)
+                
+                # Store and finish on main thread
+                self._restored_wallet = wallet
+                try:
+                    Clock.schedule_once(lambda dt: self._finish_restore_wallet(), 0)
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                error_msg = str(e)
+                try:
+                    Clock.schedule_once(lambda dt: self._restore_wallet_error(error_msg), 0)
+                except Exception:
+                    pass
+        
+        threading.Thread(target=_bg_restore, daemon=True).start()
+
+    def _finish_restore_wallet(self):
+        """Finish wallet restoration on main thread."""
+        self._hide_loading_show_main()
+        
+        wallet = getattr(self, '_restored_wallet', None)
+        self._restored_wallet = None
+        
+        if not wallet:
+            self._error("Failed to restore wallet")
+            return
+        
+        self.wallet = wallet
         self.seed_quiz_done = True
         if self.config:
             try:
                 self.config.set_key("seed_quiz_done", True)
             except Exception:
                 pass
-        self.main_screen.quiz_completed = True
+        if self.main_screen:
+            self.main_screen.quiz_completed = True
         self._pending_wallet_restored_popup = True
         Clock.schedule_once(
             lambda dt: self.open_password_dialog(first_time_setup=True), 0.1
         )
         self.refresh_wallet()
+
+    def _restore_wallet_error(self, error_msg):
+        """Handle wallet restoration error."""
+        self._hide_loading_show_main()
+        self._error(f"Failed to restore wallet: {error_msg}")
 
     # ---------- Network status handling ----------
 

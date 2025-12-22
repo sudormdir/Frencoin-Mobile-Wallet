@@ -33,8 +33,10 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 <p align="center">
 <img width="225" height="500" alt="Confirmation screen" src="https://github.com/user-attachments/assets/af5c41b3-1411-4fef-a15d-85cd7e2200d2" />
 </p>
-
 - A confirmation dialog summarizes destination, amount, and fee tier. Fee control includes presets (Slow / Normal / Fast / Extreme) plus a custom slider for advanced use, along with the “subtract fee from amount” toggle.
+<p align="center">
+<img width="200" height="250" alt="Successful transaction" src="https://github.com/user-attachments/assets/8c29a94c-be1a-406c-b7f3-db6dcd617764" />
+</p>
 - Successful broadcasts display a pop-up containing the transaction ID and a copy button for quick sharing.
 
 ### Awareness & feedback

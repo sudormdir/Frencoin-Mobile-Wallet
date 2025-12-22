@@ -18,7 +18,7 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 
 ## Feature Tour
 <p align='center'>
-<img width="225" height="500" alt="Frencoin Mobile Wallet Welcome Screen" src="https://github.com/user-attachments/assets/a598b9d3-9eae-48ea-b22a-4ae883bfa5fe" />
+<img width="182" height="386" alt="Welcome screen" src="https://github.com/user-attachments/assets/b31b3bb6-e931-4374-9325-46876db3eca9" />
 </p>
 
 

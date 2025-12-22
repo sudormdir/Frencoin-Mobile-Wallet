@@ -162,7 +162,7 @@ Sign the resulting `*.apk` or `*.aab` with your own keystore, then run `zipalign
 
 ### Set a password
 <p align="center">
-<img width="225" height="500" alt="Password warning" src="https://github.com/user-attachments/assets/8d7a5b5d-dff4-4e6e-a1ac-11e67da6357c" />
+<img width="200" height="330" alt="Password warning" src="https://github.com/user-attachments/assets/2303a044-5aa9-4b8d-89e1-cd7e7ffd38d5" />
 </p>
 When you create or restore a wallet, the app prompts you to set a password. **This is strongly recommended.** The password encrypts your wallet file using strong cryptography, which means:
 

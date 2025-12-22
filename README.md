@@ -57,13 +57,14 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 
 | Path | Purpose |
 | --- | --- |
+| `aiohttp_socks` | Stub module to satisfy electrum import. |
+| `charset_normalizer` | Pure python implementation required for https requests. |
+| `assets` | Fun and frenly images used in the app. |
 | `main.py` | App entry point: Kivy UI definitions, Electrum wiring, send/receive flows, and status updates. |
 | `electrum/` | Vendored Electrum fork tuned for Frencoin parameters and default server. |
 | `buildozer.spec` | Buildozer configuration (requirements list, Android arch list, packaged assets, permissions). |
 | `p4a-recipes/` | Custom python-for-android recipes (e.g., KawPow, X16R/V2). |
-| `libs/` | ABI-specific folders holding the prebuilt `libsecp256k1.so` binaries. |
-| `bin/` | Output APKs from Buildozer runs (ignored when not needed). |
-| `p4a_310_env/` | Example Python 3.10 virtual environment (kept for reference but not meant for sharing). |
+| `libs/` | Contains instructions for building the `libsecp256k1.so` binary necessary for compiling the wallet. |
 
 ---
 
@@ -110,8 +111,6 @@ pip install --upgrade pip
 pip install "cython<3" "buildozer>=1.5.0"
 ```
 
-> Each developer should keep their own `.venv/` out of version control. The sample `p4a_310_env/` folder is just an example of what **not** to commit.
-
 ### 3. Make sure native libraries exist
 
 The wallet expects `libsecp256k1.so` inside `libs/<abi>/` for every ABI you target (`armeabi-v7a`, `arm64-v8a`, etc.). Fresh clones already contain prebuilt binaries. If you change secp256k1 or add a new ABI:
@@ -157,6 +156,8 @@ Sign the resulting `*.apk` or `*.aab` with your own keystore, then run `zipalign
 
 ### Set a password
 
+<img width="225" height="500" alt="Password warning" src="https://github.com/user-attachments/assets/8d7a5b5d-dff4-4e6e-a1ac-11e67da6357c" />
+
 When you create or restore a wallet, the app prompts you to set a password. **This is strongly recommended.** The password encrypts your wallet file using strong cryptography, which means:
 
 - If someone gains physical access to your device, they cannot extract your seed phrase without the password.
@@ -199,6 +200,6 @@ Shipping a vendored Electrum copy guarantees Frencoin network tweaks, default se
 
 Yes. `main.py` wires `SimpleConfig` to `35.208.59.201:50002:s` in oneserver mode. Change the host, port, or SSL flag there to point to your own infrastructure or to fall back to server auto-discovery.
 
-### Do I need a specific operating system?
+### Do I need a specific operating system to compile the wallet?
 
 Linux and macOS are both supported, and Windows users can build inside WSL2. Pick whichever environment has stable USB debugging and Android tooling for you. The important part is running CPython 3.10 with Java 17 and enough disk space for SDK downloads.

@@ -119,7 +119,7 @@ pip install "cython<3" "buildozer>=1.5.0"
 
 ### 3. Make sure native libraries exist
 
-The wallet expects `libsecp256k1.so` inside `libs/<abi>/` for every ABI you target (`armeabi-v7a`, `arm64-v8a`, etc.). Fresh clones already contain prebuilt binaries. If you change secp256k1 or add a new ABI:
+The wallet expects `libsecp256k1.so` inside `libs/<abi>/` for every ABI you target (`armeabi-v7a`, `arm64-v8a`, etc.). If you change secp256k1 or add a new ABI:
 
 1. Follow `libs/README.md` to cross-compile the library with the Android NDK.
 2. Drop the resulting `.so` under the correct `libs/<abi>/` folder.

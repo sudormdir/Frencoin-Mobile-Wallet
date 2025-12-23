@@ -51,6 +51,7 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 - Clipboard is automatically cleared 60 seconds after copying sensitive data (addresses, transaction IDs).
 - Menu flow allows password changes, fee preference tweaks, and seed review (password-gated) at any time.
 - Ships with prebuilt `libsecp256k1.so` for the supported ABIs so signatures are handled by hardened native code.
+- Screenshots are disabled to prevent remote viewing of seed phrase.
 
 ### Quality-of-life polish
 - Status line shows Electrum connectivity (server, sync state, errors) so you immediately know if something is wrong.
@@ -193,7 +194,7 @@ Your 12-word seed phrase can restore your wallet on any compatible device. Treat
 - **Brute-force protection:** After several wrong password attempts, the app enforces escalating cooldown periods (1 minute, then 3 minutes, then 5+ minutes). This state persists across app restarts.
 - **Clipboard clearing:** When you copy an address or transaction ID, the clipboard is automatically cleared after 60 seconds to prevent other apps from reading sensitive data.
 - **Secure file permissions:** Wallet files are created with restrictive permissions (owner read/write only) to prevent other apps from accessing them.
-
+- **No screenshots** Screenshots are disabled to prevent bad actors from viewing your seed phrase.
 ---
 
 ## FAQ

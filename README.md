@@ -63,8 +63,8 @@ Frencoin Mobile Wallet is a non-custodial Android wallet that bundles a Frencoin
 
 | Path | Purpose |
 | --- | --- |
-| `aiohttp_socks` | Stub module to satisfy electrum import. |
-| `charset_normalizer` | Pure python implementation required for https requests. |
+| `aiohttp_socks` | Stub module to satisfy Electrum import. |
+| `charset_normalizer` | Pure python implementation required for http requests. |
 | `assets` | Fun and frenly images used in the app. |
 | `main.py` | App entry point: Kivy UI definitions, Electrum wiring, send/receive flows, and status updates. |
 | `electrum/` | Vendored Electrum fork tuned for Frencoin parameters and default server. |

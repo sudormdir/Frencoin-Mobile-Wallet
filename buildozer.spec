@@ -10,6 +10,7 @@
 # (str) Title of your application
 title = Frencoin Wallet
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
+android.release_artifact = apk
 
 # (str) Package name (no spaces).  This becomes part of the
 # application’s Java package (e.g. org.frencoin.wallet).
